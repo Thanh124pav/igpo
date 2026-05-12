@@ -111,6 +111,93 @@ ingpo/
   `polIter_qwen1_5b_base_spo_chain_MATH.jsonnet` is inherited so the masked
   whitening behaviour is identical.
 
+## Build-tree pseudocode (implementation-oriented)
+
+Below is the high-level flow implemented by
+`InGPOInferenceStrategy._construct_tree` + `TriggerEngine.decide`.
+
+```text
+BuildTree(initial_prompt, max_depth, data_instance):
+    client  <- ensure_vllm_client()
+    scorer  <- make_lp_scorer(client)
+
+    # Build Y asynchronously (per problem), then initialize trigger engine on demand.
+    y_task  <- async build_answer_set(problem_id, problem_text, gold)
+    engine  <- None
+
+    root <- Node(
+        text=initial_prompt, depth=0, full_text=initial_prompt,
+        ingpo_action="expand", ingpo_segment_id="root"
+    )
+
+    async ensure_engine():
+        if engine already exists: return engine
+        Y <- await y_task
+        if Y is empty: return None   # fallback to vanilla SPO expansion
+        engine <- TriggerEngine(answer_set=Y, scorer=scorer, thresholds=...)
+        await engine.register_root(initial_prompt)
+        return engine
+
+    async dfs(node, prefix, depth):
+        if depth == max_depth:
+            node.reward <- reward_function(prefix, node.text)
+            node.leaf <- True
+            return
+
+        children <- node_expander.expand(node, prefix, depth)
+        node.children <- children
+        local_engine <- await ensure_engine()
+
+        expansion_tasks <- []
+        pending_decisions <- []
+        parent_seg_id <- node.ingpo_segment_id or "root"
+
+        for each child in children:
+            assign child.ingpo_segment_id / ingpo_parent_segment_id / ingpo_depth
+
+            if child is terminal (finish_reason != "length"):
+                child.reward <- reward_function(prefix, child.full_text)
+                child.leaf <- True
+                if local_engine exists:
+                    pending_decisions.append(payload for is_leaf=True)
+                continue
+
+            child.leaf <- False
+            if local_engine is None:
+                expansion_tasks.append(dfs(child, child.full_text, depth+1))
+            else:
+                pending_decisions.append(payload for is_leaf=False)
+
+        if local_engine exists and pending_decisions not empty:
+            # Parallel decision stage across siblings
+            decision_results <- gather(local_engine.decide(payload_i), return_exceptions=True)
+
+            for each (child, is_leaf, result):
+                if result is Exception:
+                    if not is_leaf:
+                        expansion_tasks.append(dfs(child, child.full_text, depth+1))
+                    continue
+
+                annotate child with decision metadata
+
+                if is_leaf: continue
+                if decision.action == EXPAND:
+                    expansion_tasks.append(dfs(child, child.full_text, depth+1))
+                else if decision.action in {SHARE, PRUNE}:
+                    child.leaf <- True
+                    child.reward <- NaN   # resolved later by episode generator
+
+        await gather(expansion_tasks)
+
+        # Aggregate non-NaN child rewards for node-level stats
+        node.reward, node.reward_std <- aggregate(children)
+
+    await dfs(root, initial_prompt, 0)
+    root.ingpo_stats <- engine.stats if engine else {}
+    root.ingpo_answer_set_size <- |Y|
+    return root
+```
+
 ## Quick start
 
 ```sh
@@ -131,15 +218,105 @@ bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
 
 ## Reproducing the paper experiments
 
+### Preconditions (applies to all experiments)
+
+1. Run setup once:
+   ```sh
+   bash scripts/setup.sh
+   ```
+2. Start a vLLM server:
+   ```sh
+   bash scripts/start_vllm_server.sh Qwen/Qwen2.5-1.5B 8000 42 32 0
+   export APP_OPENAI_VLLM_API_BASE=http://127.0.0.1:8000/v1
+   ```
+3. Optional but recommended for reproducibility:
+   ```sh
+   export APP_SEED=42
+   ```
+
+### InGPO paper experiments: meaning + how to run
+
+#### Exp 1 — Sample efficiency
+**Research question:**  
+With the same model family and tree schedules, does InGPO reach the same (or better)
+Pass@1 using fewer training problems than SPO?
+
+**What to look at:**  
+Evaluation curves of Pass@1 vs number of seen training problems / iterations.
+
+**Run command:**
 ```sh
-# Exp 1 — sample efficiency on Qwen-MATH and Rho-GSM8K, 4-4-4/6-6-6/8-8-8.
+# Qwen + Rho, trees 4-4-4 / 6-6-6 / 8-8-8
 TREES="444 666 888" MODELS="qwen rho" bash scripts/run_exp1_sample_efficiency.sh
+```
 
-# Exp 2 — prune/share rate per depth + advantage variance.
+#### Exp 2 — Trigger behavior (Share/Prune rate) + advantage variance
+**Research question:**  
+Do Share/Prune triggers actually fire online at meaningful rates, and do they reduce
+advantage variance (one core motivation for PPO stability)?
+
+**What to look at:**  
+`ingpo/share_rate`, `ingpo/prune_rate`, per-depth trigger rates, and variance-related
+stats from the produced metrics.
+
+**Run command:**
+```sh
 INGPO_TREE=666 bash scripts/run_exp2_prune_share_rate.sh
+```
 
-# Exp 3 — overhead vs SPO.
+#### Exp 3 — Overhead vs SPO
+**Research question:**  
+How much extra wall-clock is introduced by LP scoring + trigger logic, compared to
+plain SPO under matched settings?
+
+**What to look at:**  
+Episode-generation timing and total runtime of paired SPO vs InGPO runs.
+
+**Run command:**
+```sh
 INGPO_TREE=666 NUM_ITER=10 bash scripts/run_exp3_overhead.sh
+```
+
+---
+
+## Reproducing SPO baselines from this repo
+
+This repo vendors SPO under `spo/`, and provides a thin driver script so you can
+run SPO-family baselines in the same environment/config style as InGPO.
+
+### 1) Run a single SPO baseline
+
+```sh
+# Example: SPO-tree on MATH
+bash scripts/run_baseline.sh spo_tree_MATH
+```
+
+Other common names are defined in `configs/baselines/` (e.g. `spo_chain_GSM8K`,
+`ppo_MATH`, `grpo_GSM8K`, `dpo_positive_MATH`, `restem_GSM8K`, `vineppo_GSM8K`, `rft_MATH`).
+
+### 2) Match paper-style tree settings
+
+```sh
+# Force tree pattern, e.g. 6-6-6
+INGPO_TREE=666 bash scripts/run_baseline.sh spo_tree_MATH
+```
+
+### 3) Multi-seed baseline runs
+
+```sh
+# Run multiple seeds for a baseline config
+CONFIG=spo_tree_MATH SEEDS="41 42 43" bash scripts/run_seeds.sh
+```
+
+### 4) Evaluate a trained checkpoint
+
+```sh
+bash scripts/evaluate.sh <config_name> <checkpoint_dir>
+```
+
+Example:
+```sh
+bash scripts/evaluate.sh spo_tree_MATH experiments/spo-tree-math/iteration_0010
 ```
 
 ## Ablations (PLAN.md §5)
