@@ -57,8 +57,8 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
     def __init__(
         self,
         # InGPO-specific knobs ------------------------------------------------
-        ingpo_K: int = 10,
-        ingpo_m: int = 100,
+        ingpo_K: int = 4,
+        ingpo_m: int = 32,
         ingpo_epsilon: float = 0.02,
         ingpo_r_max: float = 1.0,
         ingpo_alpha: float = 0.05,
@@ -245,12 +245,15 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             local_engine = await _ensure_engine()
 
             expansion_tasks = []
+            pending_decisions: List[Tuple[Dict[str, Any], Node, bool]] = []
+            parent_seg_id = node.get("ingpo_segment_id", "root")
+
             for ch_idx, child in enumerate(children):
                 child_seg_id = f"{node.get('ingpo_segment_id', 'root')}/{depth}/{ch_idx}"
                 child["ingpo_segment_id"] = child_seg_id
                 child["ingpo_action"] = Action.EXPAND.value
                 child["ingpo_depth"] = depth + 1
-                child["ingpo_parent_segment_id"] = node.get("ingpo_segment_id", "root")
+                child["ingpo_parent_segment_id"] = parent_seg_id
                 if child["finish_reason"] != "length":
                     child["reward"], _ = self.reward_function(
                         query=prefix,
@@ -259,16 +262,18 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     )
                     child["leaf"] = True
                     if local_engine is not None:
-                        try:
-                            decision = await local_engine.decide(
-                                segment_id=child_seg_id,
-                                parent_id=node.get("ingpo_segment_id", "root"),
-                                prefix=child["full_text"],
-                                is_leaf=True,
+                        pending_decisions.append(
+                            (
+                                {
+                                    "segment_id": child_seg_id,
+                                    "parent_id": parent_seg_id,
+                                    "prefix": child["full_text"],
+                                    "is_leaf": True,
+                                },
+                                child,
+                                True,
                             )
-                            self._annotate_node(child, decision)
-                        except Exception as exc:
-                            logger.warning(f"InGPO decide() failed (leaf): {exc}")
+                        )
                     continue
 
                 child["leaf"] = False
@@ -278,34 +283,56 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     )
                     continue
 
-                try:
-                    decision = await local_engine.decide(
-                        segment_id=child_seg_id,
-                        parent_id=node.get("ingpo_segment_id", "root"),
-                        prefix=child["full_text"],
-                        is_leaf=False,
+                pending_decisions.append(
+                    (
+                        {
+                            "segment_id": child_seg_id,
+                            "parent_id": parent_seg_id,
+                            "prefix": child["full_text"],
+                            "is_leaf": False,
+                        },
+                        child,
+                        False,
                     )
-                except Exception as exc:
-                    logger.warning(f"InGPO decide() failed: {exc}")
-                    expansion_tasks.append(
-                        asyncio.create_task(dfs(child, child["full_text"], depth + 1))
-                    )
-                    continue
+                )
 
-                self._annotate_node(child, decision)
+            if local_engine is not None and pending_decisions:
+                decision_tasks = [
+                    asyncio.create_task(local_engine.decide(**payload))
+                    for payload, _, _ in pending_decisions
+                ]
+                decision_results = await asyncio.gather(
+                    *decision_tasks, return_exceptions=True
+                )
+                for (_, child, is_leaf), result in zip(pending_decisions, decision_results):
+                    if isinstance(result, Exception):
+                        if is_leaf:
+                            logger.warning(f"InGPO decide() failed (leaf): {result}")
+                        else:
+                            logger.warning(f"InGPO decide() failed: {result}")
+                            expansion_tasks.append(
+                                asyncio.create_task(dfs(child, child["full_text"], depth + 1))
+                            )
+                        continue
 
-                if decision.action is Action.EXPAND:
-                    expansion_tasks.append(
-                        asyncio.create_task(dfs(child, child["full_text"], depth + 1))
-                    )
-                elif decision.action is Action.SHARE:
-                    # Inherit value from share_target (set later in episode
-                    # generator) but mark as a leaf so the tree code stops.
-                    child["leaf"] = True
-                    child["reward"] = float("nan")  # sentinel; replaced later
-                else:  # Action.PRUNE
-                    child["leaf"] = True
-                    child["reward"] = float("nan")  # sentinel; replaced later
+                    decision = result
+                    self._annotate_node(child, decision)
+
+                    if is_leaf:
+                        continue
+
+                    if decision.action is Action.EXPAND:
+                        expansion_tasks.append(
+                            asyncio.create_task(dfs(child, child["full_text"], depth + 1))
+                        )
+                    elif decision.action is Action.SHARE:
+                        # Inherit value from share_target (set later in episode
+                        # generator) but mark as a leaf so the tree code stops.
+                        child["leaf"] = True
+                        child["reward"] = float("nan")  # sentinel; replaced later
+                    else:  # Action.PRUNE
+                        child["leaf"] = True
+                        child["reward"] = float("nan")  # sentinel; replaced later
 
             if expansion_tasks:
                 await asyncio.gather(*expansion_tasks)
