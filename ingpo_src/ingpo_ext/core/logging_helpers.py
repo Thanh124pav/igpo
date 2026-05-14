@@ -6,6 +6,9 @@ the full SPO Python stack.
 
 from __future__ import annotations
 
+import json
+import os
+import threading
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
@@ -155,6 +158,51 @@ def render_md_section(
         out.append("\n")
     out.append("\n")
     return "".join(out)
+
+
+class ConstructionEventWriter:
+    """Append-only JSONL sink for per-decision construction events.
+
+    One file per training run, shared across trees. Thread-safe so multiple
+    `_construct_tree` coroutines can write concurrently without interleaved
+    half-records.
+    """
+
+    def __init__(self, path: str, enabled: bool = True):
+        self.enabled = bool(enabled)
+        self.path = path
+        self._lock = threading.Lock()
+        self._handle = None
+        if not self.enabled:
+            return
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            self._handle = open(path, "a", encoding="utf-8")
+        except Exception:
+            self.enabled = False
+            self._handle = None
+
+    def write(self, record: Dict[str, Any]) -> None:
+        if not self.enabled or self._handle is None:
+            return
+        line = json.dumps(record, default=lambda o: None)
+        with self._lock:
+            try:
+                self._handle.write(line)
+                self._handle.write("\n")
+                self._handle.flush()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        if self._handle is None:
+            return
+        with self._lock:
+            try:
+                self._handle.close()
+            except Exception:
+                pass
+            self._handle = None
 
 
 def to_jsonl_record(

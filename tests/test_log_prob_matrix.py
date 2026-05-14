@@ -34,3 +34,41 @@ def test_validates_dimensions():
     M.add_row("s0", [-1.0, -2.0])
     with pytest.raises(ValueError):
         M.fill_full("s0", [-3.0])
+
+
+def test_delta_stable_when_mass_concentrated_on_Y():
+    """When sum_i exp(LP[i]) is extremely close to 1, the naive
+    `log(1 - exp(log_sum))` cancels to log(1e-12). The log1mexp rewrite
+    keeps the residual accurate to many more decimals."""
+    M = LogProbMatrix(K=1, m=1)
+    # log_sum = log(1 - 1e-15). delta should equal log(1e-15) ≈ -34.54
+    # (within the precision of representing 1e-15 in float64).
+    M.add_row("s0", [math.log(1.0 - 1e-15)])
+    row = M.get("s0")
+    # Within ~ulp(log(1e-15)) — the input itself is only good to ~5e-16.
+    assert row.delta() == pytest.approx(math.log(1e-15), abs=1e-2)
+    # Sanity: should not be floored at log(1e-12) anymore.
+    assert row.delta() < math.log(1e-12)
+
+
+def test_delta_finite_for_deeply_negative_LP():
+    """LP rows of -300 must not produce NaN/inf in delta()."""
+    M = LogProbMatrix(K=4, m=4)
+    M.add_row("s0", [-300.0, -300.0, -300.0, -300.0])
+    row = M.get("s0")
+    d = row.delta()
+    assert math.isfinite(d)
+    # sum exp(-300) ≈ 0 ⇒ delta ≈ log(1) = 0.
+    assert d == pytest.approx(0.0, abs=1e-6)
+
+
+def test_avg_delta_finite_with_deep_LP_rows():
+    """avg_delta uses log-space averaging now; should stay > 0 even when
+    every individual exp(delta) underflows in float64."""
+    M = LogProbMatrix(K=2, m=2)
+    for i in range(5):
+        M.add_row(f"s{i}", [-2.0, -2.0])
+        M.fill_full(f"s{i}", [])  # K == m, fill is a noop but marks has_full
+    avg = M.avg_delta()
+    assert math.isfinite(avg)
+    assert avg > 0.0

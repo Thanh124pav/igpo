@@ -25,6 +25,7 @@ Both runs.
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
@@ -69,6 +70,9 @@ class TriggerStats:
     pruned: int = 0
     avg_tv_share: float = 0.0
     avg_gap_prune: float = 0.0
+    tokens_generated: int = 0
+    max_depth_reached: int = 0
+    per_depth: Dict[int, Counter] = field(default_factory=dict)
 
     def update_share(self, tv: float) -> None:
         n = self.shared + 1
@@ -80,19 +84,52 @@ class TriggerStats:
         self.avg_gap_prune = (self.avg_gap_prune * self.pruned + gap) / n
         self.pruned = n
 
-    def as_dict(self) -> Dict[str, float]:
+    def record_decision(self, depth: int, action: "Action") -> None:
+        bucket = self.per_depth.setdefault(int(depth), Counter())
+        bucket[action.value] += 1
+        if depth > self.max_depth_reached:
+            self.max_depth_reached = int(depth)
+
+    def add_tokens(self, n: int) -> None:
+        if n > 0:
+            self.tokens_generated += int(n)
+
+    def share_rate(self) -> float:
         total = self.expanded + self.shared + self.pruned
-        share_rate = self.shared / max(total, 1)
-        prune_rate = self.pruned / max(total, 1)
-        return {
+        return self.shared / max(total, 1)
+
+    def prune_rate(self) -> float:
+        total = self.expanded + self.shared + self.pruned
+        return self.pruned / max(total, 1)
+
+    def per_depth_dict(self) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for d, c in sorted(self.per_depth.items()):
+            total = sum(c.values())
+            if total == 0:
+                continue
+            out[f"ingpo/depth_{d}/n"] = total
+            out[f"ingpo/depth_{d}/expand_count"] = c.get("expand", 0)
+            out[f"ingpo/depth_{d}/share_count"] = c.get("share", 0)
+            out[f"ingpo/depth_{d}/prune_count"] = c.get("prune", 0)
+            out[f"ingpo/depth_{d}/share_rate"] = c.get("share", 0) / total
+            out[f"ingpo/depth_{d}/prune_rate"] = c.get("prune", 0) / total
+        return out
+
+    def as_dict(self) -> Dict[str, float]:
+        out = {
             "ingpo/expanded_count": self.expanded,
             "ingpo/shared_count": self.shared,
             "ingpo/pruned_count": self.pruned,
-            "ingpo/share_rate": share_rate,
-            "ingpo/prune_rate": prune_rate,
+            "ingpo/share_rate": self.share_rate(),
+            "ingpo/prune_rate": self.prune_rate(),
             "ingpo/avg_tv_when_share": self.avg_tv_share,
             "ingpo/avg_gap_when_prune": self.avg_gap_prune,
+            "ingpo/tokens_generated": self.tokens_generated,
+            "ingpo/max_depth_reached": self.max_depth_reached,
         }
+        out.update(self.per_depth_dict())
+        return out
 
 
 @dataclass
@@ -104,6 +141,7 @@ class TriggerEngine:
     enable_prune: bool = True
     share_target: str = "nearest"  # one of {"nearest", "parent", "root"}
     root_segment_id: str = "root"
+    prune_skip_root: bool = True  # do not PRUNE depth-1 children (parent==root)
     lp_matrix: LogProbMatrix = field(init=False)
     bst: SegmentBST = field(init=False)
     stats: TriggerStats = field(default_factory=TriggerStats)
@@ -176,7 +214,20 @@ class TriggerEngine:
                         return decision
 
         # ---- Trigger 2: Prune --------------------------------------------
-        if self.enable_prune and parent_id is not None and self.lp_matrix.has(parent_id):
+        # PLAN.md Algorithm 3 line 31 compares child to parent at the same
+        # generation regime. When parent is the synthetic root the two
+        # prefixes differ in length by O(M) tokens, so log p(y | root) tends
+        # to be much higher than log p(y | root+segment) for any segment,
+        # making the PRUNE check fire on every depth-1 child. Gate it out.
+        prune_blocked_by_root = (
+            self.prune_skip_root and parent_id == self.root_segment_id
+        )
+        if (
+            self.enable_prune
+            and parent_id is not None
+            and not prune_blocked_by_root
+            and self.lp_matrix.has(parent_id)
+        ):
             row_pa = self.lp_matrix.get(parent_id)
             gap_K = row_pa.avg_lp_K - row_s.avg_lp_K
             decision.avg_lp_diff_to_pa_K = gap_K

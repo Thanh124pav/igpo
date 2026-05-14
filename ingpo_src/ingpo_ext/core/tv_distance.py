@@ -18,7 +18,7 @@ from typing import Tuple
 
 import numpy as np
 
-from ingpo_ext.core.log_prob_matrix import SegmentLP
+from ingpo_ext.core.log_prob_matrix import SegmentLP, log1mexp_array
 
 
 def avg_lp_K(row: SegmentLP) -> float:
@@ -30,6 +30,16 @@ def avg_lp_m(row: SegmentLP) -> float:
 
 
 def tv_m(row_a: SegmentLP, row_b: SegmentLP) -> float:
+    """0.5 * sum_i |exp(LP_a[i]) - exp(LP_b[i])| + 0.5 * (exp(delta_a) + exp(delta_b)).
+
+    Body computed in log-space to stay finite when LP values are deeply
+    negative:
+        |exp(a) - exp(b)| = exp(max(a,b)) * (1 - exp(-|a-b|))
+                          = exp( max(a,b) + log1mexp(-|a-b|) )
+    The tail uses delta() (also log-space) and exponentiates only the final
+    scalar.
+    """
+
     if row_a.full is None or row_b.full is None:
         raise RuntimeError(
             "tv_m requires both rows to have their full m-length LP vector. "
@@ -38,10 +48,25 @@ def tv_m(row_a: SegmentLP, row_b: SegmentLP) -> float:
     if row_a.m != row_b.m:
         raise ValueError(f"Row m mismatch: {row_a.m} vs {row_b.m}")
 
-    pa = np.exp(row_a.full)
-    pb = np.exp(row_b.full)
-    body = 0.5 * float(np.sum(np.abs(pa - pb)))
-    tail = 0.5 * (math.exp(row_a.delta()) + math.exp(row_b.delta()))
+    a = np.asarray(row_a.full, dtype=np.float64)
+    b = np.asarray(row_b.full, dtype=np.float64)
+    diff = np.abs(a - b)
+    # Where diff == 0, |exp(a) - exp(b)| = 0 exactly. log1mexp(0) is -inf;
+    # mask those entries so they contribute 0 instead of NaN.
+    nonzero = diff > 0.0
+    log_abs = np.full_like(diff, fill_value=-np.inf)
+    if np.any(nonzero):
+        upper = np.maximum(a[nonzero], b[nonzero])
+        log_abs[nonzero] = upper + log1mexp_array(-diff[nonzero])
+    # sum_i exp(log_abs[i]) via stable accumulation
+    finite = log_abs[np.isfinite(log_abs)]
+    if finite.size == 0:
+        body = 0.0
+    else:
+        m = float(np.max(finite))
+        body = 0.5 * math.exp(m) * float(np.sum(np.exp(finite - m)))
+
+    tail = 0.5 * (math.exp(min(row_a.delta(), 0.0)) + math.exp(min(row_b.delta(), 0.0)))
     return body + tail
 
 
