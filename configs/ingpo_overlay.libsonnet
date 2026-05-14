@@ -33,6 +33,13 @@
       ingpo_y_max_tokens: $.ingpo.y_max_tokens,
       ingpo_y_field: $.ingpo.y_field,
       ingpo_score_concurrency: $.ingpo.score_concurrency,
+      ingpo_prune_skip_root: $.ingpo.prune_skip_root,
+      ingpo_log_construction: $.ingpo.log_construction,
+      ingpo_log_per_decision: $.ingpo.log_per_decision,
+      ingpo_tensorboard_enabled: $.ingpo.tensorboard_enabled,
+      ingpo_tensorboard_dir: $.ingpo.tensorboard_dir,
+      ingpo_construction_log_path: $.ingpo.construction_log_path,
+      ingpo_model_context_size: $.ingpo.model_context_size,
     },
 
     ingpo_zero_advantage_when_pruned: $.ingpo.zero_advantage_when_pruned,
