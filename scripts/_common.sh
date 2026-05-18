@@ -139,7 +139,7 @@ ingpo_run() {
   WANDB_PROJECT="${WANDB_PROJECT}" \
   APP_EXPERIMENT_NAME="${exp_name}" \
   deepspeed --master_port "${MASTER_PORT}" --include "localhost:${INGPO_GPU_INCLUDE}" \
-    -m treetune.main \
+    "${INGPO_ROOT}/treetune/main.py" \
     --configs "${resolved_cfgs}" \
     "$@" \
     run_iteration_loop
@@ -154,7 +154,7 @@ ingpo_eval() {
   WANDB_PROJECT="${WANDB_PROJECT}" \
   APP_EXPERIMENT_NAME="${exp_name}" \
   deepspeed --master_port "${MASTER_PORT}" --include "localhost:${INGPO_GPU_INCLUDE}" \
-    -m treetune.main \
+    "${INGPO_ROOT}/treetune/main.py" \
     --configs "${cfgs},${gpu_config}" \
     "$@" \
     evaluate --iteration 0 --last_policy_path "${last_policy}"
