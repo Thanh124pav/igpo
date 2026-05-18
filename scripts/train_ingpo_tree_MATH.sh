@@ -13,7 +13,7 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
-MODEL="${MODEL:-qwen1_5b_base}"
+MODEL="${MODEL:-qwen1b}"
 TREE="${TREE:-${INGPO_TREE:-666}}"
 EXP_NAME="${APP_EXPERIMENT_NAME:-ingpo-tree-${TREE}-${MODEL}-math}"
 
