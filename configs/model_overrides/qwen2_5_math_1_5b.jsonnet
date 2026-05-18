@@ -17,13 +17,4 @@ local guidance_llm = (import '../guidance_llms/openai_vllm.jsonnet') + {
     actor_model+: { hf_model_name: hf_model_name },
     reference_model+: { hf_model_name: hf_model_name },
   },
-  inference_pipelines: if std.objectHas(super, 'inference_pipelines') then [
-    p {
-      inference_strategy+: {
-        guidance_llm: guidance_llm,
-        node_expander+: { tokenizer: tokenizer },
-      },
-    }
-    for p in super.inference_pipelines
-  ] else [],
 }
