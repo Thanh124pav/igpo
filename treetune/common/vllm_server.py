@@ -5,7 +5,6 @@ import shlex
 import socket
 import subprocess
 import time
-from pathlib import Path
 from typing import Optional, Union, Callable, Dict
 
 import psutil
@@ -347,56 +346,34 @@ class VLLMServer(FromParams):
                 ],
                 text=True,
                 capture_output=True,
+                check=True,
             )
-            pids = [
+            gpu_pids = [
                 int(p.strip())
                 for p in result.stdout.splitlines()
                 if p.strip().isdigit()
             ]
         except Exception as e:
             logger.warning(f"Could not query GPU {gpu_idx} processes: {e}")
-            pids = []
+            return
 
-        vllm_pids = [pid for pid in pids if self._pid_command_starts_with_vllm(pid)]
-        skipped_pids = sorted(set(pids) - set(vllm_pids))
-        if skipped_pids:
-            logger.info(
-                f"Skipping non-vLLM process(es) still on GPU {gpu_idx}: {skipped_pids}"
-            )
+        for pid in gpu_pids:
+            try:
+                proc = psutil.Process(pid)
+                cmdline = " ".join(proc.cmdline()).lower()
 
-        if vllm_pids:
-            logger.info(
-                f"Force-killing {len(vllm_pids)} vLLM process(es) still on GPU {gpu_idx}: {vllm_pids}"
-            )
-            for pid in vllm_pids:
-                try:
+                if "vllm" in cmdline:
+                    logger.info(
+                        f"Force-killing vLLM process on GPU {gpu_idx}: PID {pid} ({cmdline[:80]})"
+                    )
                     os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                except Exception as e:
-                    logger.warning(f"Could not kill PID {pid}: {e}")
+                else:
+                    logger.info(
+                        f"Skipping non-vLLM process on GPU {gpu_idx}: PID {pid} ({proc.name()})"
+                    )
+            except (psutil.NoSuchProcess, ProcessLookupError):
+                pass
+            except Exception as e:
+                logger.warning(f"Could not check/kill PID {pid}: {e}")
 
-        time.sleep(5)
-
-    @staticmethod
-    def _pid_command_starts_with_vllm(pid: int) -> bool:
-        try:
-            result = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "args="],
-                text=True,
-                capture_output=True,
-            )
-        except Exception as e:
-            logger.warning(f"Could not inspect PID {pid}: {e}")
-            return False
-
-        command = result.stdout.strip()
-        if result.returncode != 0 or not command:
-            return False
-
-        try:
-            executable = shlex.split(command)[0]
-        except ValueError:
-            executable = command.split(maxsplit=1)[0]
-
-        return Path(executable).name.startswith("vllm")
+        time.sleep(2)
