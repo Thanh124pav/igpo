@@ -292,6 +292,22 @@ class VLLMServer(FromParams):
             logger.info("Server is not running.")
             return
 
+        # Capture our vLLM process tree BEFORE killing anything, so that the
+        # later force-kill on the GPU is strictly scoped to processes we own.
+        # Without this, a substring match on "vllm" in cmdline can also match
+        # training ranks (e.g. argv contains --vllm_port, config paths) and
+        # killing one would tear down the distributed group.
+        owned_pids = {self.process.pid}
+        try:
+            owned_pids.update(
+                child.pid
+                for child in psutil.Process(self.process.pid).children(recursive=True)
+            )
+        except psutil.NoSuchProcess:
+            pass
+        except Exception as e:
+            logger.warning(f"Could not enumerate vLLM children: {e}")
+
         self.process.kill()
         time.sleep(3)
 
@@ -330,11 +346,20 @@ class VLLMServer(FromParams):
         # On B200/newer GPUs, vLLM worker processes can hold CUDA memory even
         # after the main process is killed. Force-kill processes on this GPU.
         if self._gpu_idx is not None:
-            self._force_free_gpu_memory(self._gpu_idx)
+            self._force_free_gpu_memory(self._gpu_idx, owned_pids)
 
-    def _force_free_gpu_memory(self, gpu_idx: int):
-        """Kill remaining vLLM processes holding CUDA memory on a specific GPU."""
+    def _force_free_gpu_memory(self, gpu_idx: int, owned_pids: set):
+        """Kill remaining vLLM-owned processes holding CUDA memory on a GPU.
+
+        ``owned_pids`` must be the set of PIDs we spawned (main vLLM process
+        + its descendants), captured before tear-down. We intersect that with
+        the GPU's compute-apps list so we never touch unrelated processes
+        (e.g. training ranks) that happen to share the GPU.
+        """
         import signal
+
+        if not owned_pids:
+            return
 
         try:
             result = subprocess.run(
@@ -348,32 +373,29 @@ class VLLMServer(FromParams):
                 capture_output=True,
                 check=True,
             )
-            gpu_pids = [
+            gpu_pids = {
                 int(p.strip())
                 for p in result.stdout.splitlines()
                 if p.strip().isdigit()
-            ]
+            }
         except Exception as e:
             logger.warning(f"Could not query GPU {gpu_idx} processes: {e}")
             return
 
-        for pid in gpu_pids:
+        to_kill = gpu_pids & owned_pids
+        for pid in to_kill:
             try:
-                proc = psutil.Process(pid)
-                cmdline = " ".join(proc.cmdline()).lower()
-
-                if "vllm" in cmdline:
-                    logger.info(
-                        f"Force-killing vLLM process on GPU {gpu_idx}: PID {pid} ({cmdline[:80]})"
-                    )
-                    os.kill(pid, signal.SIGKILL)
-                else:
-                    logger.info(
-                        f"Skipping non-vLLM process on GPU {gpu_idx}: PID {pid} ({proc.name()})"
-                    )
+                logger.info(f"Force-killing owned vLLM PID {pid} on GPU {gpu_idx}")
+                os.kill(pid, signal.SIGKILL)
             except (psutil.NoSuchProcess, ProcessLookupError):
                 pass
             except Exception as e:
-                logger.warning(f"Could not check/kill PID {pid}: {e}")
+                logger.warning(f"Could not kill PID {pid}: {e}")
+
+        unowned = gpu_pids - owned_pids
+        if unowned:
+            logger.info(
+                f"Leaving non-owned process(es) on GPU {gpu_idx} alone: {sorted(unowned)}"
+            )
 
         time.sleep(2)
