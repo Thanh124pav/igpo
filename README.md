@@ -1,456 +1,189 @@
-# InGPO: Information-Gated Policy Optimization
+# treetune: Unified RL Framework for Reasoning LLMs
 
-Implementation of **InGPO** as specified in [`PLAN.md`](./PLAN.md): an
-extension to **SPO (Segment Policy Optimization)** that adds two online
-triggers — **ValueShare** for redundant segments and **Prune** for
-information-irrelevant segments — gated by a TV bound over a per-problem
-answer set `Y`.
+Một codebase thống nhất để huấn luyện LLM trên các tác vụ suy luận (MATH, GSM8K, Point24) bằng nhiều thuật toán RL khác nhau. Tất cả các thuật toán đứng ngang hàng, chọn bằng config.
 
-This repo wraps the upstream [SPO](https://github.com/AIFrameResearch/SPO)
-codebase: SPO is cloned verbatim into [`spo/`](./spo) and InGPO components
-are layered on top via Python registration decorators and Jsonnet config
-inheritance, so all SPO behaviour (phases, probability mask, replay buffer,
-PPO-with-prob-mask trainer) is reused unchanged.
+## Algorithm catalog
 
-## Layout
+| Thuật toán | Trainer | Episode generator | Inference strategy | Script |
+|------------|---------|-------------------|--------------------|--------|
+| **PPO** — vanilla Proximal Policy Optimization | `ppo` | `math_episode_generator` | `cot` | `train_ppo_MATH.sh` |
+| **GRPO** — Group Relative PO (DeepSeek) | `ppo` | `math_episode_generator_w_group_advantages` (adv=`grpo`) | `cot` | `train_grpo_MATH.sh` |
+| **RLOO** — REINFORCE Leave-One-Out | `ppo` | `math_episode_generator_w_group_advantages` (adv=`rloo`) | `cot` | `train_rloo_GSM8K.sh` |
+| **VinePPO** — PPO với vine-style value baseline | `ppo` | `vineppo_episode_generator` | `cot` | `train_vineppo_GSM8K.sh` |
+| **DPO** — Direct Preference Optimization (positive variant) | `dpo_positive` | `math_dpo_positive_episode_generator` | `cot` | `train_dpo_MATH.sh` |
+| **RestEM** — Rejection sampling + EM-style FT | `restem` | `math_restem_episode_generator` | `cot` | `train_restem_MATH.sh` |
+| **SPO-chain** — Segment PO trên chain | `ppo` | `math_episode_generator` | `cot` | `train_spo_chain_MATH.sh` |
+| **SPO-tree** — Segment PO trên cây branching | `ppo` | `hybrid_episode_generator` | `hybrid` | `train_spo_tree_MATH.sh` |
+| **InGPO** — Information-Gated PO (SPO + ValueShare + Prune) | `ppo` | `ingpo_episode_generator` | `ingpo` | `train_ingpo_tree_MATH.sh` |
+
+Mỗi thuật toán có file canonical ở `configs/algorithms/<algo>.libsonnet` — thin overlay set `(trainer, episode_generator, inference_strategy)` types. Người dùng compose với model/task base để tạo full experiment config.
+
+## Cấu trúc thư mục
 
 ```
 ingpo/
-├── PLAN.md                      # the spec
-├── README.md
-├── spo/                         # cloned upstream SPO
-├── ingpo_src/
-│   ├── ingpo_main.py            # entrypoint that registers ext + runs SPO
-│   └── ingpo_ext/
-│       ├── core/                # math: log-prob matrix, BST, TV, η/τ, triggers
-│       ├── inference_strategies/ingpo_inference_strategy.py
-│       └── episode_generators/ingpo_episode_generator.py
+├── treetune/                         # Python package thống nhất
+│   ├── common/                       # registry, FromParams, Params utilities
+│   ├── trainers/                     # ppo, dpo_positive, restem, mle, ...
+│   ├── episode_generators/           # tất cả episode generators (PPO/GRPO/DPO/RestEM/VinePPO/SPO/InGPO)
+│   ├── inference_strategies/         # cot, hybrid, ingpo, ...
+│   ├── ingpo/                        # InGPO core helpers (TV bound, answer set, triggers)
+│   ├── runtime/                      # policy iteration runtime
+│   ├── models/, tasks/, analyzers/   # SPO infrastructure
+│   └── main.py                       # entry point (treetune.main)
+├── guidance/                         # vendored guidance lib (parsing prompts)
 ├── configs/
-│   ├── ingpo_defaults.libsonnet
-│   ├── ingpo_overlay.libsonnet            # SPO-tree -> InGPO-tree overlay
-│   ├── debug.jsonnet                      # tiny smoke-test config
-│   ├── polIter_qwen1_5b_base_ingpo_tree_MATH.jsonnet
-│   ├── polIter_qwen1b_ingpo_tree_{MATH,point24}.jsonnet
-│   ├── polIter_qwen05b_ingpo_tree_GSM8K.jsonnet
-│   ├── polIter_rho1bSft2_ingpo_tree_{MATH,GSM8K}.jsonnet
-│   ├── episode_generators/
-│   │   ├── branch_factor_{333,444,456,555,654,666,777,888}.jsonnet
-│   │   ├── branch_factor_{3333,4444}.jsonnet     # D=4
-│   │   ├── branch_factor_33333.jsonnet           # D=5
-│   │   └── depth_2_W6.jsonnet                    # D=2 control
-│   ├── ablations/
-│   │   ├── abl1_K{1,5,10,20}_m{20,50,100,200,500}.jsonnet
-│   │   ├── abl2_eta_{0p005,0p01,0p02,0p05,0p10,0p20}.jsonnet
-│   │   ├── abl3_share_target_{parent,root}.jsonnet
-│   │   ├── abl4_{share-only,prune-only,neither}.jsonnet
-│   │   ├── abl{5,6,7}_*.jsonnet
-│   │   └── abl_y_temperature_{0p3,1p0}.jsonnet
-│   └── baselines/
-│       ├── spo_{tree,chain}_{MATH,GSM8K,...}.jsonnet
-│       ├── {ppo,grpo,dpo_positive,restem}_{MATH,GSM8K}.jsonnet
-│       ├── vineppo_GSM8K.jsonnet
-│       └── rft_MATH.jsonnet
-├── scripts/
-│   ├── setup.sh                          # clone + pip install + dataset prep
-│   ├── start_vllm_server.sh              # alias of SPO's
-│   ├── download_cached.sh                # alias of SPO's cache helper
-│   ├── train_ingpo_tree_{MATH,GSM8K}.sh
-│   ├── train_ingpo_tree_{qwen1b_MATH,qwen1b_point24,qwen05b_GSM8K,rho_MATH}.sh
-│   ├── train_debug.sh                    # 2-iter end-to-end smoke run
-│   ├── run_baseline.sh                   # SPO / PPO / GRPO / DPO / ReSTEM / VinePPO / RFT
-│   ├── run_seeds.sh                      # multi-seed driver
-│   ├── run_smoke.sh                      # config compile + unit tests (CPU-only)
-│   ├── run_all_models.sh                 # iterate every (model, dataset) pair
-│   ├── run_exp1_sample_efficiency.sh
-│   ├── run_exp2_prune_share_rate.sh
-│   ├── run_exp3_overhead.sh
-│   ├── run_exp_deep_tree.sh              # D in {2,3,4,5} compute Pareto
-│   ├── run_exp_eta_sweep.sh              # eta soundness/throughput trade-off
-│   ├── run_exp_K_m_sweep.sh              # scoring budget trade-off
-│   ├── run_ablations.sh
-│   ├── evaluate.sh                       # SPO/InGPO checkpoint eval
-│   ├── evaluate_long_cot.sh              # lighteval recipe (math_500 / gsm8k)
-│   ├── inspect_tree.py                   # pretty-print one InGPO tree JSON
-│   ├── aggregate_stats.py                # episodes/*.json -> stats.csv
-│   ├── build_global_Y.py                 # Abl 5 helper
-│   └── oracle_audit.py                   # Abl 7 helper
-└── tests/                                # 17 unit tests on the core
+│   ├── algorithms/                   # ppo.libsonnet, grpo.libsonnet, ... (9 files)
+│   ├── trainers/, episode_generators/, inference_strategies/, models/, tasks/
+│   ├── polIter_<model>_<algo>_<dataset>.jsonnet  # full experiment configs
+│   ├── ablations/, baselines/        # InGPO-specific overlays
+│   ├── ingpo_defaults.libsonnet, ingpo_overlay.libsonnet
+│   └── episode_generators/branch_factor_*.jsonnet  # tree shape overlays
+├── scripts/                          # train_<algo>_<dataset>.sh + utilities
+├── tests/                            # unit tests
+├── docs/legacy/                      # legacy SPO README/LICENSE/Dockerfile
+└── README.md
 ```
 
-## Algorithm map
+## Bắt đầu nhanh
 
-| PLAN.md section | InGPO module |
-|---|---|
-| Def 2.1 LogP Matrix | `ingpo_ext/core/log_prob_matrix.py` |
-| Def 2.2 AvgLP & TV | `ingpo_ext/core/tv_distance.py` |
-| Def 2.3 / Lemma 2.4 thresholds | `ingpo_ext/core/thresholds.py` |
-| Build Y at depth=1 | `ingpo_ext/core/answer_set.py` |
-| Score `log π(y_i \| traj(s))` | `ingpo_ext/core/{lp_scorer,vllm_scorer}.py` |
-| BST keyed by AvgLP_K | `ingpo_ext/core/segment_index.py` |
-| Online Share / Prune | `ingpo_ext/core/triggers.py` |
-| Tree builder | `ingpo_ext/inference_strategies/ingpo_inference_strategy.py` |
-| Edge → episode | `ingpo_ext/episode_generators/ingpo_episode_generator.py` |
+### Cài đặt
 
-## How it integrates with SPO
-
-* **Inference strategy** `InGPOInferenceStrategy` (registered as
-  `type: 'ingpo'`) subclasses SPO's `HybridInferenceStrategy` and overrides
-  only `_construct_tree`. The full SPO width-W parallel expansion is kept;
-  every freshly-generated child is annotated with
-  `ingpo_action ∈ {expand, share, prune}` and either recursed into or
-  short-circuited.
-* **Episode generator** `InGPOEpisodeGenerator` (registered as
-  `type: 'ingpo_episode_generator'`) subclasses
-  `HybridEpisodeGenerator` and overrides only `extract_edges_from_tree`,
-  which:
-  - drops PRUNE edges (or zeros their advantage if
-    `ingpo_zero_advantage_when_pruned`),
-  - resolves SHARE edges' value/reward from the share target,
-  - propagates Share/Prune metadata for wandb logging.
-* **PPO trainer** is **unchanged**. The `use_prob_mask=true` setting from
-  `polIter_qwen1_5b_base_spo_chain_MATH.jsonnet` is inherited so the masked
-  whitening behaviour is identical.
-
-## Build-tree pseudocode (implementation-oriented)
-
-Below is the high-level flow implemented by
-`InGPOInferenceStrategy._construct_tree` + `TriggerEngine.decide`.
-
-```text
-BuildTree(initial_prompt, max_depth, data_instance):
-    client  <- ensure_vllm_client()
-    scorer  <- make_lp_scorer(client)
-
-    # Build Y asynchronously (per problem), then initialize trigger engine on demand.
-    y_task  <- async build_answer_set(problem_id, problem_text, gold)
-    engine  <- None
-
-    root <- Node(
-        text=initial_prompt, depth=0, full_text=initial_prompt,
-        ingpo_action="expand", ingpo_segment_id="root"
-    )
-
-    async ensure_engine():
-        if engine already exists: return engine
-        Y <- await y_task
-        if Y is empty: return None   # fallback to vanilla SPO expansion
-        engine <- TriggerEngine(answer_set=Y, scorer=scorer, thresholds=...)
-        await engine.register_root(initial_prompt)
-        return engine
-
-    async dfs(node, prefix, depth):
-        if depth == max_depth:
-            node.reward <- reward_function(prefix, node.text)
-            node.leaf <- True
-            return
-
-        children <- node_expander.expand(node, prefix, depth)
-        node.children <- children
-        local_engine <- await ensure_engine()
-
-        expansion_tasks <- []
-        pending_decisions <- []
-        parent_seg_id <- node.ingpo_segment_id or "root"
-
-        for each child in children:
-            assign child.ingpo_segment_id / ingpo_parent_segment_id / ingpo_depth
-
-            if child is terminal (finish_reason != "length"):
-                child.reward <- reward_function(prefix, child.full_text)
-                child.leaf <- True
-                if local_engine exists:
-                    pending_decisions.append(payload for is_leaf=True)
-                continue
-
-            child.leaf <- False
-            if local_engine is None:
-                expansion_tasks.append(dfs(child, child.full_text, depth+1))
-            else:
-                pending_decisions.append(payload for is_leaf=False)
-
-        if local_engine exists and pending_decisions not empty:
-            # Parallel decision stage across siblings
-            decision_results <- gather(local_engine.decide(payload_i), return_exceptions=True)
-
-            for each (child, is_leaf, result):
-                if result is Exception:
-                    if not is_leaf:
-                        expansion_tasks.append(dfs(child, child.full_text, depth+1))
-                    continue
-
-                annotate child with decision metadata
-
-                if is_leaf: continue
-                if decision.action == EXPAND:
-                    expansion_tasks.append(dfs(child, child.full_text, depth+1))
-                else if decision.action in {SHARE, PRUNE}:
-                    child.leaf <- True
-                    child.reward <- NaN   # resolved later by episode generator
-
-        await gather(expansion_tasks)
-
-        # Aggregate non-NaN child rewards for node-level stats
-        node.reward, node.reward_std <- aggregate(children)
-
-    await dfs(root, initial_prompt, 0)
-    root.ingpo_stats <- engine.stats if engine else {}
-    root.ingpo_answer_set_size <- |Y|
-    return root
-```
-
-## Quick start
-
-```sh
-# 1. Bootstrap: clone SPO, install deps, download datasets.
+```bash
 bash scripts/setup.sh
+```
 
-# 2. Start a vLLM server (in another terminal).
-bash scripts/start_vllm_server.sh Qwen/Qwen2.5-1.5B 8000 42 32 0
+### Khởi động vLLM server (cần cho scoring)
+
+```bash
+bash scripts/start_vllm_server.sh /path/to/model 8000 42 32 0
 export APP_OPENAI_VLLM_API_BASE=http://127.0.0.1:8000/v1
+```
 
-# 3. Train.
+### Huấn luyện một thuật toán
+
+```bash
+# PPO trên MATH với model mặc định
+bash scripts/train_ppo_MATH.sh
+
+# GRPO với model khác
+MODEL=qwen1b bash scripts/train_grpo_MATH.sh
+
+# DPO
+bash scripts/train_dpo_MATH.sh
+
+# VinePPO trên GSM8K
+bash scripts/train_vineppo_GSM8K.sh
+
+# SPO-tree với tree shape tùy chỉnh
+TREE=6666 bash scripts/train_spo_tree_MATH.sh
+
+# InGPO-tree (mặc định 666)
 INGPO_TREE=666 bash scripts/train_ingpo_tree_MATH.sh
+```
 
-# 4. Evaluate.
+### Đánh giá
+
+```bash
 bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
     experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010
 ```
 
-## Reproducing the paper experiments
+## Compose configs
 
-### Preconditions (applies to all experiments)
+Mỗi config experiment ghép từ các lớp overlay:
 
-1. Run setup once:
-   ```sh
-   bash scripts/setup.sh
-   ```
-2. Start a vLLM server:
-   ```sh
-   bash scripts/start_vllm_server.sh Qwen/Qwen2.5-1.5B 8000 42 32 0
-   export APP_OPENAI_VLLM_API_BASE=http://127.0.0.1:8000/v1
-   ```
-3. Optional but recommended for reproducibility:
-   ```sh
-   export APP_SEED=42
-   ```
-
-### InGPO paper experiments: meaning + how to run
-
-#### Exp 1 — Sample efficiency
-**Research question:**  
-With the same model family and tree schedules, does InGPO reach the same (or better)
-Pass@1 using fewer training problems than SPO?
-
-**What to look at:**  
-Evaluation curves of Pass@1 vs number of seen training problems / iterations.
-
-**Run command:**
-```sh
-# Qwen + Rho, trees 4-4-4 / 6-6-6 / 8-8-8
-TREES="444 666 888" MODELS="qwen rho" bash scripts/run_exp1_sample_efficiency.sh
+```
+[gvar.jsonnet]                              # global vars
++ [prompt_library/<task>.jsonnet]           # task-specific prompts
++ [runtimes/policy_iteration.jsonnet]       # runtime
++ [episode_generators/<eg>.jsonnet]         # episode generator type
++ [trainers/<algo>_<dataset>.jsonnet]       # trainer hyper-params
++ [models/<model>.jsonnet]                  # model
++ {custom overrides}
 ```
 
-#### Exp 2 — Trigger behavior (Share/Prune rate) + advantage variance
-**Research question:**  
-Do Share/Prune triggers actually fire online at meaningful rates, and do they reduce
-advantage variance (one core motivation for PPO stability)?
+Để tạo experiment mới, copy một `polIter_*.jsonnet` đã có rồi đổi các overlay.
 
-**What to look at:**  
-`ingpo/share_rate`, `ingpo/prune_rate`, per-depth trigger rates, and variance-related
-stats from the produced metrics.
+## InGPO — chi tiết thuật toán
 
-**Run command:**
-```sh
-INGPO_TREE=666 bash scripts/run_exp2_prune_share_rate.sh
+InGPO mở rộng SPO-tree với hai cơ chế gated bằng Total Variation bound:
+
+1. **ValueShare**: phát hiện các segment có log-prob distribution gần giống một segment đã đánh giá → chia sẻ value, không tính lại.
+2. **Prune**: phát hiện các segment không thể tăng value so với parent hơn ε → loại khỏi cây search.
+
+Cả hai trigger được kích hoạt khi TV bound (Total Variation distance trên K logprobs) thoả ngưỡng η.
+
+Tham số mặc định (`configs/ingpo_defaults.libsonnet`):
+
+| Tham số | Default | Ý nghĩa |
+|---------|---------|---------|
+| `K` | 10 | Số mẫu logprobs để estimate AvgLP |
+| `m` | 100 | Số mẫu trong answer-set Y |
+| `epsilon` | 0.02 | Ngưỡng value gap cho Prune |
+| `share_target` | `nearest` | Target để share value (`nearest`/`parent`/`root`) |
+| `local_value_share` | true | Path local (so sánh siblings) hay global (qua Y) |
+| `demo_examples_per_tree` | 2 | Số SHARE/PRUNE demo lưu mỗi cây |
+
+Override trong file `.jsonnet`:
+
+```jsonnet
+{ ingpo+: { epsilon: 0.05, K: 20 } }
 ```
 
-#### Exp 3 — Overhead vs SPO
-**Research question:**  
-How much extra wall-clock is introduced by LP scoring + trigger logic, compared to
-plain SPO under matched settings?
+Ablations & sweep nằm trong `configs/ablations/`, `configs/baselines/`, `configs/num_iter_sweep.libsonnet`.
 
-**What to look at:**  
-Episode-generation timing and total runtime of paired SPO vs InGPO runs.
+## Logging offline (no internet)
 
-**Run command:**
-```sh
-INGPO_TREE=666 NUM_ITER=10 bash scripts/run_exp3_overhead.sh
+InGPO ghi mọi metric ra file để dùng offline:
+
+- `<exp>/training_timing.jsonl` — mỗi iteration 1 dòng: `train_total_seconds` (không gồm eval), `eval_seconds`, cumulative wall.
+- `<exp>/ingpo_demos/demos.jsonl` — mỗi tree: stats, per_depth, tree_construction_seconds, SHARE/PRUNE demos.
+- `<exp>/ingpo_demos/demos.md` — bản Markdown human-readable.
+
+Xem live:
+
+```bash
+bash scripts/tail_demos.sh <exp_name>             # markdown
+bash scripts/tail_demos.sh <exp_name> jsonl       # jsonl
+python scripts/inspect_demos.py <exp>/ingpo_demos/demos.jsonl --summary
 ```
-
----
-
-## Reproducing SPO baselines from this repo
-
-This repo vendors SPO under `spo/`, and provides a thin driver script so you can
-run SPO-family baselines in the same environment/config style as InGPO.
-
-### 1) Run a single SPO baseline
-
-```sh
-# Example: SPO-tree on MATH
-bash scripts/run_baseline.sh spo_tree_MATH
-```
-
-Other common names are defined in `configs/baselines/` (e.g. `spo_chain_GSM8K`,
-`ppo_MATH`, `grpo_GSM8K`, `dpo_positive_MATH`, `restem_GSM8K`, `vineppo_GSM8K`, `rft_MATH`).
-
-### 2) Match paper-style tree settings
-
-```sh
-# Force tree pattern, e.g. 6-6-6
-INGPO_TREE=666 bash scripts/run_baseline.sh spo_tree_MATH
-```
-
-### 3) Multi-seed baseline runs
-
-```sh
-# Run multiple seeds for a baseline config
-CONFIG=spo_tree_MATH SEEDS="41 42 43" bash scripts/run_seeds.sh
-```
-
-### 4) Evaluate a trained checkpoint
-
-```sh
-bash scripts/evaluate.sh <config_name> <checkpoint_dir>
-```
-
-Example:
-```sh
-bash scripts/evaluate.sh spo_tree_MATH experiments/spo-tree-math/iteration_0010
-```
-
-## Ablations (PLAN.md §5)
-
-```sh
-ABLATIONS="abl1 abl2 abl3 abl4 abl5 abl6 abl7" bash scripts/run_ablations.sh
-```
-
-| Run name | Toggle |
-|---|---|
-| `abl1-K{5,20}-m{50,200}` | K vs m grid |
-| `abl2-eta-{0.005..0.05}` | η theory vs grid |
-| `abl3-share-{parent,root}` | Share target |
-| `abl4-{share-only,prune-only,neither}` | Trigger ablation |
-| `abl5-y-per-dataset` | Y precomputed once (use `scripts/build_global_Y.py`) |
-| `abl6-no-dkw` | DKW band off → τ = η |
-| `abl7-oracle-record` | Keep PRUNE/SHARE edges for `scripts/oracle_audit.py` |
 
 ## Tests
 
-```sh
-PYTHONPATH=ingpo_src python -m pytest tests/ -q
+```bash
+PYTHONPATH=. python -m pytest tests/ -q       # unit tests (no GPU needed)
+bash scripts/run_smoke.sh                     # config compile + unit tests
+bash scripts/train_debug.sh                   # E2E 2 iterations, depth 2 (needs vLLM)
 ```
 
-17 unit tests cover the BST, log-prob matrix, TV computation, threshold
-formulas, and the trigger state machine on stub LP vectors.
+## Migration notes
 
-For a CPU-only smoke check (compiles every jsonnet config + runs the unit
-tests, no GPU/vLLM needed):
+Phiên bản trước có hai layer riêng: `ingpo/spo/` (SPO) + `ingpo/ingpo_src/` (InGPO ext). Refactor này gộp tất cả vào `treetune/` ở top level:
 
-```sh
-bash scripts/run_smoke.sh
-```
+| Cũ | Mới |
+|----|-----|
+| `ingpo/spo/src/treetune/` | `ingpo/treetune/` |
+| `ingpo/spo/src/guidance/` | `ingpo/guidance/` |
+| `ingpo/ingpo_src/ingpo_ext/core/` | `ingpo/treetune/ingpo/` |
+| `ingpo/ingpo_src/ingpo_ext/episode_generators/ingpo_episode_generator.py` | `ingpo/treetune/episode_generators/ingpo_episode_generator.py` |
+| `ingpo/ingpo_src/ingpo_ext/inference_strategies/ingpo_inference_strategy.py` | `ingpo/treetune/inference_strategies/ingpo_inference_strategy.py` |
+| `ingpo/spo/configs/*` + `ingpo/configs/*` | `ingpo/configs/*` (merged) |
+| `ingpo/spo/scripts/*` + `ingpo/scripts/*` | `ingpo/scripts/*` (merged) |
+| `ingpo_main.py` shim | xoá — dùng `python -m treetune.main` |
+| `import ingpo_ext.X` | `import treetune.ingpo.X` |
+| `setup.py` (ingpo_ext) | `setup.py` (treetune, single package) |
 
-For an end-to-end debug run (2 iterations, depth-2 tree, m=8) once vLLM is
-up:
-
-```sh
-bash scripts/train_debug.sh
-```
-
-## Logging (offline-friendly)
-
-InGPO logging works **without internet / wandb** — demos and rates are
-written to local files under
-`<APP_DIRECTORY>/<exp_name>/ingpo_demos/` per tree. wandb is optional
-(`ingpo.log_demos_to_wandb = false` by default, so no upload attempts).
-
-### Per-tree scalar metrics (always emitted, also to wandb if enabled)
-
-Aggregate rates:
-
-* `ingpo/share_rate`, `ingpo/prune_rate`,
-  `ingpo/expanded_count`, `ingpo/shared_count`, `ingpo/pruned_count`
-* `ingpo/avg_tv_when_share`, `ingpo/avg_gap_when_prune`
-* `ingpo/answer_set_size`
-
-Per-depth breakdown (one set per depth `d` reached in the tree):
-
-* `ingpo/depth_<d>/n`, `expand_count`, `share_count`, `prune_count`,
-  `share_rate`, `prune_rate`
-
-### Demo files (local filesystem)
-
-Two append-only files written next to your experiment dir:
-
-| File                                     | Audience            | Format                         |
-|------------------------------------------|---------------------|--------------------------------|
-| `ingpo_demos/demos.jsonl`                | scripts / analysis  | JSON-Lines, one record/tree    |
-| `ingpo_demos/demos.md`                   | humans              | Markdown, section per tree     |
-
-Each tree contributes up to `ingpo.demo_examples_per_tree` SHARE rows and
-the same for PRUNE rows. Each row carries:
-
-| column        | meaning                                                  |
-|---------------|----------------------------------------------------------|
-| question_id   | dataset row id                                           |
-| action        | `share` or `prune`                                       |
-| depth         | depth of the child segment                               |
-| seg_id        | tree-internal id of the child segment                    |
-| parent_text   | text of the parent segment (truncated to 240 chars)      |
-| child_text    | text of the candidate segment that fired the trigger     |
-| target_text   | SHARE only — text of the segment we shared into          |
-| target_seg_id | id of that share target                                  |
-| avg_lp_K      | the candidate's K-subset AvgLP                           |
-| tv_m          | TV_m to share target (SHARE only)                        |
-| gap_m         | AvgLP_m gap to parent (PRUNE only)                       |
-| eta, tau      | thresholds in effect for this decision                   |
-
-### Reading demos on a server with no GUI
-
-Watch the human-readable Markdown live during training:
-
-```sh
-bash scripts/tail_demos.sh <exp_name>           # tail -F demos.md
-bash scripts/tail_demos.sh <exp_name> jsonl     # raw JSONL stream
-```
-
-Filter / pretty-print after the run:
-
-```sh
-# show first 20 share+prune demos
-python scripts/inspect_demos.py experiments/<exp>/ingpo_demos/demos.jsonl
-
-# only PRUNE demos at depth 2, first 5
-python scripts/inspect_demos.py experiments/<exp>/ingpo_demos/demos.jsonl \
-    --action prune --depth 2 --limit 5
-
-# just totals, no demo bodies
-python scripts/inspect_demos.py experiments/<exp>/ingpo_demos/demos.jsonl --summary
-```
-
-`inspect_demos.py` only needs the standard library — copy it onto any
-offline machine.
-
-### Knobs (override in any jsonnet via `ingpo+: { ... }`)
-
-| Knob                             | Default | Purpose                                |
-|----------------------------------|---------|----------------------------------------|
-| `demo_examples_per_tree`         | `2`     | rows of each (SHARE/PRUNE) per tree    |
-| `demos_dir`                      | `null`  | absolute override; else `<exp_root>/ingpo_demos` |
-| `log_demos_to_wandb`             | `false` | also push the wandb.Table when running with wandb |
-
-## Notes
-
-* The vLLM `/v1/completions` endpoint is hit with `echo=True, logprobs=1,
-  max_tokens=0` to score `log π(y_i | traj(s))` — see
-  `ingpo_ext/core/vllm_scorer.py`.
-* `K=10, m=100, ε=0.02` are the defaults from PLAN.md §3-4 and live in
-  `configs/ingpo_defaults.libsonnet`.
-* All compute and tree-building knobs (W, D, M, temperatures, prompt
-  templates, reward function, replay buffer policy) come from the inherited
-  SPO config — no SPO file is modified.
+DAPO không có trong scope — dùng GRPO (`scripts/train_grpo_MATH.sh`) thay thế.
 
 ## License
 
-Same as SPO (MIT). See [`spo/LICENSE`](./spo/LICENSE).
+Code base treetune kế thừa MIT License của SPO. Xem `docs/legacy/LICENSE_SPO`.
+
+## Tham khảo
+
+- [SPO paper](https://github.com/AIFrameResearch/SPO) — Segment Policy Optimization gốc
+- [GRPO paper](https://arxiv.org/abs/2402.03300) — DeepSeek-Math
+- [VinePPO paper](https://arxiv.org/abs/2410.01679) — McGill
+- [DPO paper](https://arxiv.org/abs/2305.18290) — Stanford
+- `PLAN.md` — đặc tả chi tiết thuật toán InGPO
