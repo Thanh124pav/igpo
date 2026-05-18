@@ -293,10 +293,23 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         async def _score_sibling_probs(parent: Node, siblings: Sequence[Node]) -> Dict[str, float]:
             if not siblings:
                 return {}
-            scores = await asyncio.gather(
-                *(scorer.score_one(parent["full_text"], child.get("text", "")) for child in siblings)
-            )
-            probs = stable_softmax(scores)
+            # Reuse sum_logprobs stored during generation when available,
+            # falling back to a separate vLLM call only for nodes that lack it.
+            raw_scores: List[float] = [0.0] * len(siblings)
+            pending: List[tuple] = []
+            for idx, child in enumerate(siblings):
+                cached = child.get("sum_logprobs")
+                if cached is not None:
+                    raw_scores[idx] = float(cached)
+                else:
+                    pending.append((idx, child))
+            if pending:
+                fetched = await asyncio.gather(
+                    *(scorer.score_one(parent["full_text"], child.get("text", "")) for _, child in pending)
+                )
+                for (idx, _), val in zip(pending, fetched):
+                    raw_scores[idx] = val
+            probs = stable_softmax(raw_scores)
             return {
                 child["ingpo_segment_id"]: float(probs[idx])
                 for idx, child in enumerate(siblings)
