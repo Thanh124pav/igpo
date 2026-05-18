@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Train InGPO-tree on MATH with Qwen2.5-1.5B.
+# Train InGPO-tree on MATH.
 #
 # Tree shape via TREE=<digits> (or INGPO_TREE=<digits> for back-compat).
 # Any shape works — if the matching branch_factor_<shape>.jsonnet does
@@ -13,10 +13,11 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
+MODEL="${MODEL:-qwen1_5b_base}"
 TREE="${TREE:-${INGPO_TREE:-666}}"
-EXP_NAME="${APP_EXPERIMENT_NAME:-ingpo-tree-${TREE}-qwen1.5b-math}"
+EXP_NAME="${APP_EXPERIMENT_NAME:-ingpo-tree-${TREE}-${MODEL}-math}"
 
-CFGS="${INGPO_ROOT}/configs/polIter_qwen1_5b_base_ingpo_tree_MATH.jsonnet"
+CFGS="$(resolve_math_config ingpo_tree "${MODEL}")"
 CFGS+=",$(ensure_tree_config "${TREE}")"
 
 ingpo_run "${EXP_NAME}" "${CFGS}" "$@"

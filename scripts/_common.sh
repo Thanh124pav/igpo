@@ -125,3 +125,49 @@ ensure_tree_config() {
   echo "[tree] generated branch_factor_${shape}.jsonnet (depth=${depth}, M=${M})" >&2
   echo "${out}"
 }
+
+default_model_base_for_suffix() {
+  local suffix="$1"
+  case "${suffix}" in
+    ingpo_tree|spo_tree|spo_chain|grpo)
+      echo "qwen1_5b_base"
+      ;;
+    ppo|dpo_positive|restem)
+      echo "rho1bSft2"
+      ;;
+    *)
+      echo "qwen1_5b_base"
+      ;;
+  esac
+}
+
+# resolve_math_config <suffix> <model_alias>
+# First prefer a fully materialized config:
+#   configs/polIter_<model_alias>_<suffix>_MATH.jsonnet
+# If it does not exist but configs/model_overrides/<model_alias>.jsonnet does,
+# compose a known base config with that model override. This keeps new model
+# support compact while preserving existing hand-tuned configs.
+resolve_math_config() {
+  local suffix="$1"
+  local model="$2"
+  local direct="${INGPO_ROOT}/configs/polIter_${model}_${suffix}_MATH.jsonnet"
+  if [[ -f "${direct}" ]]; then
+    echo "${direct}"
+    return 0
+  fi
+
+  local override="${INGPO_ROOT}/configs/model_overrides/${model}.jsonnet"
+  if [[ -f "${override}" ]]; then
+    local base="${MODEL_BASE:-$(default_model_base_for_suffix "${suffix}")}"
+    local base_cfg="${INGPO_ROOT}/configs/polIter_${base}_${suffix}_MATH.jsonnet"
+    if [[ ! -f "${base_cfg}" ]]; then
+      echo "[model] missing base config for MODEL=${model}: ${base_cfg}" >&2
+      return 1
+    fi
+    echo "${base_cfg},${override}"
+    return 0
+  fi
+
+  echo "[model] unknown MODEL=${model}; expected ${direct} or ${override}" >&2
+  return 1
+}

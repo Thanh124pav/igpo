@@ -7,6 +7,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 MODEL="${MODEL:-rho1bSft2}"
 EXP_NAME="${APP_EXPERIMENT_NAME:-restem-${MODEL}-math}"
 
-CFGS="${INGPO_ROOT}/configs/polIter_${MODEL}_restem_MATH.jsonnet"
+CFGS="$(resolve_math_config restem "${MODEL}")"
 
 ingpo_run "${EXP_NAME}" "${CFGS}" "$@"

@@ -17,7 +17,7 @@ MODEL="${MODEL:-qwen1b}"
 TREE="${TREE:-${INGPO_TREE:-666}}"
 EXP_NAME="${APP_EXPERIMENT_NAME:-spo-tree-${TREE}-${MODEL}-math}"
 
-CFGS="${INGPO_ROOT}/configs/polIter_${MODEL}_spo_tree_MATH.jsonnet"
+CFGS="$(resolve_math_config spo_tree "${MODEL}")"
 CFGS+=",$(ensure_tree_config "${TREE}")"
 
 ingpo_run "${EXP_NAME}" "${CFGS}" "$@"

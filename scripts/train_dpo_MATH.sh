@@ -7,6 +7,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 MODEL="${MODEL:-rho1bSft2}"
 EXP_NAME="${APP_EXPERIMENT_NAME:-dpo-${MODEL}-math}"
 
-CFGS="${INGPO_ROOT}/configs/polIter_${MODEL}_dpo_positive_MATH.jsonnet"
+CFGS="$(resolve_math_config dpo_positive "${MODEL}")"
 
 ingpo_run "${EXP_NAME}" "${CFGS}" "$@"
