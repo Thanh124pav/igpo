@@ -6,7 +6,7 @@ set -euo pipefail
 INGPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "[smoke] Compiling all jsonnet configs..."
-python - <<PY
+python3 - <<PY
 import _jsonnet, sys
 from pathlib import Path
 root = Path("${INGPO_ROOT}")
@@ -15,7 +15,7 @@ for f in sorted((root / "configs").rglob("*.jsonnet")):
     try:
         _jsonnet.evaluate_file(
             str(f),
-            jpathdir=[str(root / "configs"), str(root / "spo/configs"), str(root / "spo")],
+            jpathdir=[str(root / "configs"), str(root)],
             ext_vars={"APP_SEED": "42"},
         )
     except Exception as e:
@@ -28,6 +28,6 @@ print(f"OK  ({len(list((root/'configs').rglob('*.jsonnet')))} configs)")
 PY
 
 echo "[smoke] Running unit tests..."
-PYTHONPATH="${INGPO_ROOT}/ingpo_src" python -m pytest "${INGPO_ROOT}/tests" -q
+PYTHONPATH="${INGPO_ROOT}" python3 -m pytest "${INGPO_ROOT}/tests" -q
 
 echo "[smoke] All checks passed."
