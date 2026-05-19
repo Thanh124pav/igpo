@@ -65,6 +65,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_m: int = 32,
         ingpo_epsilon: float = 0.02,
         ingpo_r_max: float = 1.0,
+        ingpo_gamma: float = 0.5,
         ingpo_alpha: float = 0.05,
         ingpo_use_dkw: bool = True,
         ingpo_eta_override: Optional[float] = None,
@@ -91,6 +92,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.cfg_thresholds = ThresholdConfig(
             epsilon=ingpo_epsilon,
             r_max=ingpo_r_max,
+            gamma=ingpo_gamma,
             alpha=ingpo_alpha,
             K=ingpo_K,
             use_dkw=ingpo_use_dkw,

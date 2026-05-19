@@ -26,6 +26,7 @@
       ingpo_m: $.ingpo.m,
       ingpo_epsilon: $.ingpo.epsilon,
       ingpo_r_max: $.ingpo.r_max,
+      ingpo_gamma: $.ingpo.gamma,
       ingpo_alpha: $.ingpo.alpha,
       ingpo_use_dkw: $.ingpo.use_dkw,
       ingpo_eta_override: $.ingpo.eta_override,

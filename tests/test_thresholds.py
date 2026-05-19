@@ -2,7 +2,12 @@ import math
 
 import pytest
 
-from treetune.ingpo.thresholds import ThresholdConfig, compute_eta, compute_tau
+from treetune.ingpo.thresholds import (
+    ThresholdConfig,
+    compute_eta,
+    compute_tau,
+    tv_to_value_bound,
+)
 
 
 def test_eta_from_lemma_2_4():
@@ -27,3 +32,8 @@ def test_tau_dkw_band():
 def test_tau_no_dkw():
     cfg = ThresholdConfig(K=10, use_dkw=False)
     assert compute_tau(cfg, 0.02) == 0.02
+
+
+def test_tv_to_value_bound_scales_by_discount():
+    cfg = ThresholdConfig(r_max=2.0, gamma=0.5)
+    assert tv_to_value_bound(0.1, cfg) == pytest.approx(0.4)

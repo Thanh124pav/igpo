@@ -18,6 +18,7 @@ from typing import Optional
 class ThresholdConfig:
     epsilon: float = 0.02      # acceptable value error
     r_max: float = 1.0         # max reward magnitude
+    gamma: float = 0.5         # discount factor for TV -> value error bound
     alpha: float = 0.05        # DKW confidence level
     K: int = 10                # fast subset size
     use_dkw: bool = True
@@ -38,3 +39,9 @@ def compute_tau(cfg: ThresholdConfig, eta: float) -> float:
         return eta
     band = math.sqrt(math.log(2.0 / cfg.alpha) / (2.0 * max(cfg.K, 1)))
     return eta + band
+
+
+def tv_to_value_bound(tv: float, cfg: ThresholdConfig) -> float:
+    gamma = min(max(float(cfg.gamma), 0.0), 1.0 - 1e-8)
+    scale = gamma / ((1.0 - gamma) ** 2)
+    return max(float(cfg.r_max), 0.0) * scale * float(tv)

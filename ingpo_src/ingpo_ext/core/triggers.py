@@ -10,7 +10,7 @@ The decision flow follows PLAN Algorithm 3:
 
   1. Score K fast indices for the new segment s.
   2. FindNearest in the BST. If close enough, fill full m and check TV_m.
-     If TV_m <= eta -> SHARE with that segment.
+     If R_max * gamma / (1-gamma)^2 * TV_m <= epsilon -> SHARE.
   3. Else compare AvgLP_K(s) with AvgLP_K(pa). If much lower, fill full and
      check AvgLP_m gap. If still lower by eta -> PRUNE.
   4. Else INSERT into BST and let the caller expand children.
@@ -34,7 +34,7 @@ from ingpo_ext.core.answer_set import AnswerSet
 from ingpo_ext.core.log_prob_matrix import LogProbMatrix, SegmentLP
 from ingpo_ext.core.lp_scorer import LPScorer
 from ingpo_ext.core.segment_index import SegmentBST
-from ingpo_ext.core.thresholds import ThresholdConfig, compute_eta, compute_tau
+from ingpo_ext.core.thresholds import ThresholdConfig, compute_eta, compute_tau, tv_to_value_bound
 from ingpo_ext.core.tv_distance import (
     avg_lp_diff_K,
     conditional_ig_lower_bound,
@@ -196,7 +196,7 @@ class TriggerEngine:
                 if gap_K < tau:
                     await self._fill_full([row_s, row_t], prefixes=[prefix, None])
                     tv = tv_m(row_s, row_t)
-                    if tv <= eta:
+                    if tv_to_value_bound(tv, self.thresholds) <= self.thresholds.epsilon:
                         decision.action = Action.SHARE
                         decision.share_target = target_id
                         decision.tv_m = tv

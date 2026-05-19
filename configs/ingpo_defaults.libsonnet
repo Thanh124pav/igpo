@@ -9,6 +9,7 @@
     // to null instructs the engine to derive it on the fly.
     epsilon: 0.02,
     r_max: 1.0,
+    gamma: 0.5,
     alpha: 0.05,
     use_dkw: true,
     eta_override: null,

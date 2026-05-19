@@ -46,7 +46,7 @@ from treetune.ingpo.answer_set import (
     AnswerSetGenerator,
 )
 from treetune.ingpo.logging_helpers import aggregate_tree_stats
-from treetune.ingpo.thresholds import ThresholdConfig
+from treetune.ingpo.thresholds import ThresholdConfig, tv_to_value_bound
 from treetune.ingpo.triggers import Action, TriggerEngine
 from treetune.ingpo.local_value_share import (
     LocalShareDecision,
@@ -70,6 +70,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_m: int = 100,
         ingpo_epsilon: float = 0.02,
         ingpo_r_max: float = 1.0,
+        ingpo_gamma: float = 0.5,
         ingpo_alpha: float = 0.05,
         ingpo_use_dkw: bool = True,
         ingpo_eta_override: Optional[float] = None,
@@ -91,6 +92,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.cfg_thresholds = ThresholdConfig(
             epsilon=ingpo_epsilon,
             r_max=ingpo_r_max,
+            gamma=ingpo_gamma,
             alpha=ingpo_alpha,
             K=ingpo_K,
             use_dkw=ingpo_use_dkw,
@@ -383,16 +385,18 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     continue
                 pair_tvs[frozenset((src["ingpo_segment_id"], tgt["ingpo_segment_id"]))] = tv
                 radius = confidence_radius(len(continuations), self.cfg_thresholds.alpha)
-                lhs = tv + radius if self.ingpo_share_use_confidence else tv
+                tv_for_bound = tv + radius if self.ingpo_share_use_confidence else tv
+                value_bound = tv_to_value_bound(tv_for_bound, self.cfg_thresholds)
                 if src.get("ingpo_action") != Action.EXPAND.value:
                     continue
                 if tgt.get("ingpo_action") != Action.EXPAND.value:
                     continue
-                if lhs <= eta:
+                if value_bound <= self.cfg_thresholds.epsilon:
                     decision = LocalShareDecision(
                         source_id=src["ingpo_segment_id"],
                         target_id=tgt["ingpo_segment_id"],
                         tv=tv,
+                        value_bound=value_bound,
                         n_continuations=len(continuations),
                         confidence_radius=radius,
                         eta_used=eta,
@@ -400,6 +404,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     src["ingpo_action"] = Action.SHARE.value
                     src["ingpo_share_target"] = decision.target_id
                     src["ingpo_tv_m"] = decision.tv
+                    src["ingpo_share_value_bound"] = decision.value_bound
                     src["ingpo_local_support_size"] = decision.n_continuations
                     src["ingpo_confidence_radius"] = decision.confidence_radius
                     src["ingpo_eta"] = decision.eta_used
