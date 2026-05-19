@@ -94,10 +94,6 @@ class TriggerStats:
         if n > 0:
             self.tokens_generated += int(n)
 
-    def share_rate(self) -> float:
-        total = self.expanded + self.shared + self.pruned
-        return self.shared / max(total, 1)
-
     def prune_rate(self) -> float:
         total = self.expanded + self.shared + self.pruned
         return self.pruned / max(total, 1)
@@ -112,8 +108,6 @@ class TriggerStats:
             out[f"ingpo/depth_{d}/expand_count"] = c.get("expand", 0)
             out[f"ingpo/depth_{d}/share_count"] = c.get("share", 0)
             out[f"ingpo/depth_{d}/prune_count"] = c.get("prune", 0)
-            out[f"ingpo/depth_{d}/share_rate"] = c.get("share", 0) / total
-            out[f"ingpo/depth_{d}/prune_rate"] = c.get("prune", 0) / total
         return out
 
     def as_dict(self) -> Dict[str, float]:
@@ -121,7 +115,6 @@ class TriggerStats:
             "ingpo/expanded_count": self.expanded,
             "ingpo/shared_count": self.shared,
             "ingpo/pruned_count": self.pruned,
-            "ingpo/share_rate": self.share_rate(),
             "ingpo/prune_rate": self.prune_rate(),
             "ingpo/avg_tv_when_share": self.avg_tv_share,
             "ingpo/avg_gap_when_prune": self.avg_gap_prune,

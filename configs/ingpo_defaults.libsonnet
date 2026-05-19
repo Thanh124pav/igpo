@@ -30,8 +30,8 @@
     score_concurrency: 64,
 
     // Edge handling
-    zero_advantage_when_pruned: true,
-    emit_pruned_edges: false,
+    zero_advantage_when_pruned: false,
+    emit_pruned_edges: true,
 
     // Logging: how many SHARE / PRUNE demo rows to dump per tree.
     // Set 0 to skip demo files entirely (per-depth rates stay on).

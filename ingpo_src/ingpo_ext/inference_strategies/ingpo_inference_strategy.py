@@ -568,13 +568,10 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
     ) -> None:
         bucket = stats.per_depth.get(int(depth))
         depth_total = sum(bucket.values()) if bucket else 0
-        depth_share = bucket.get("share", 0) / max(depth_total, 1) if bucket else 0.0
-        depth_prune = bucket.get("prune", 0) / max(depth_total, 1) if bucket else 0.0
 
         if self.ingpo_log_construction:
             logger.info(
                 "InGPO tree=%s d=%d/%d n=%d expand=%d share=%d prune=%d "
-                "share_rate=%.3f prune_rate=%.3f "
                 "tokens=%d budget_remain=%d max_depth_reached=%d",
                 problem_id,
                 depth,
@@ -583,8 +580,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 (bucket.get("expand", 0) if bucket else 0),
                 (bucket.get("share", 0) if bucket else 0),
                 (bucket.get("prune", 0) if bucket else 0),
-                depth_share,
-                depth_prune,
                 stats.tokens_generated,
                 budgeter.root.remaining,
                 stats.max_depth_reached,
@@ -593,10 +588,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         if tb is not None and tb.enabled:
             tb.log_scalars(
                 {
-                    f"ingpo/tree_{tree_idx}/depth_{depth}/share_rate": depth_share,
-                    f"ingpo/tree_{tree_idx}/depth_{depth}/prune_rate": depth_prune,
                     f"ingpo/tree_{tree_idx}/depth_{depth}/n": depth_total,
-                    "ingpo/share_rate": stats.share_rate(),
                     "ingpo/prune_rate": stats.prune_rate(),
                     "ingpo/tokens_generated": stats.tokens_generated,
                     "ingpo/max_depth_reached": stats.max_depth_reached,

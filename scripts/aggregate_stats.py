@@ -5,7 +5,8 @@ Walks `<experiment_dir>/iteration_*/episodes/*/*.json`, parses the
 one row per tree:
 
     iteration, tree_idx, n_nodes, n_expand, n_share, n_prune,
-    share_rate, prune_rate, avg_tv_share, avg_gap_prune
+    prune_rate, share_prune_rate, total_prune_rate, factual_node_count,
+    virtual_pruned_spo_count, avg_tv_share, avg_gap_prune
 
 Useful for plotting Figure 4 (prune/share rate vs depth) without re-running
 inference.
@@ -74,8 +75,15 @@ def main() -> int:
             "n_expand": actions.get("expand", 0),
             "n_share": actions.get("share", 0),
             "n_prune": actions.get("prune", 0),
-            "share_rate": stats.get("ingpo/share_rate", 0.0),
             "prune_rate": stats.get("ingpo/prune_rate", 0.0),
+            "share_prune_rate": stats.get("ingpo/share_prune_rate", 0.0),
+            "total_prune_rate": stats.get("ingpo/total_prune_rate", 0.0),
+            "factual_node_count": stats.get("ingpo/factual_node_count", 0),
+            "virtual_pruned_spo_count": stats.get("ingpo/virtual_pruned_spo_count", 0),
+            "spo_node_count": stats.get("ingpo/spo_node_count", 0),
+            "pruned_spo_count": stats.get("ingpo/pruned_spo_count", 0),
+            "share_pruned_spo_count": stats.get("ingpo/share_pruned_spo_count", 0),
+            "total_pruned_spo_count": stats.get("ingpo/total_pruned_spo_count", 0),
             "avg_tv_share": stats.get("ingpo/avg_tv_when_share", 0.0),
             "avg_gap_prune": stats.get("ingpo/avg_gap_when_prune", 0.0),
             "answer_set_size": tree.get("ingpo_answer_set_size", 0) if isinstance(tree, dict) else 0,

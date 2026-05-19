@@ -54,8 +54,6 @@ def per_depth_action_counts(tree) -> Dict[str, float]:
         out[f"ingpo/depth_{d}/expand_count"] = c.get("expand", 0)
         out[f"ingpo/depth_{d}/share_count"] = c.get("share", 0)
         out[f"ingpo/depth_{d}/prune_count"] = c.get("prune", 0)
-        out[f"ingpo/depth_{d}/share_rate"] = c.get("share", 0) / total
-        out[f"ingpo/depth_{d}/prune_rate"] = c.get("prune", 0) / total
     return out
 
 
@@ -124,10 +122,13 @@ def render_md_section(
 
     out = [f"## Tree #{tree_idx}  (question_id={question_id})\n"]
     if stats:
-        share_rate = float(stats.get("ingpo/share_rate", 0.0) or 0.0)
         prune_rate = float(stats.get("ingpo/prune_rate", 0.0) or 0.0)
+        share_prune_rate = float(stats.get("ingpo/share_prune_rate", 0.0) or 0.0)
+        total_prune_rate = float(stats.get("ingpo/total_prune_rate", 0.0) or 0.0)
         out.append(
-            f"- share_rate: **{share_rate:.3f}**, prune_rate: **{prune_rate:.3f}**, "
+            f"- prune_rate: **{prune_rate:.3f}**, "
+            f"share_prune_rate: **{share_prune_rate:.3f}**, "
+            f"total_prune_rate: **{total_prune_rate:.3f}**, "
             f"#shared={stats.get('ingpo/shared_count', 0)}, "
             f"#pruned={stats.get('ingpo/pruned_count', 0)}, "
             f"#expanded={stats.get('ingpo/expanded_count', 0)}\n"

@@ -214,6 +214,15 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         local_avg_tv_share = 0.0
         local_pruned_count = 0
         local_avg_gap_prune = 0.0
+        branch_factor_by_depth: Dict[int, int] = {}
+
+        for d in range(max_depth):
+            try:
+                branch_factor_by_depth[d] = int(
+                    self.node_expander.branch_factor_strategy({"depth": d})
+                )
+            except Exception:
+                pass
 
         tree: Node = {
             "text": initial_prompt,
@@ -498,6 +507,10 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     max_tokens=max_tokens,
                 )
             node["children"] = children
+            branch_factor_by_depth[depth] = max(
+                branch_factor_by_depth.get(depth, 0),
+                len(children),
+            )
 
             local_engine = await _ensure_engine()
 
@@ -621,11 +634,16 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
 
         await dfs(tree, initial_prompt, 0)
 
-        # Aggregate stats from the final tree once.  Same tree walk as
-        # ``per_depth_action_counts`` → aggregate rates can't disagree with
-        # per-depth rates, and the local_value_share path stops dropping
-        # expanded nodes from the denominator.
-        stats = aggregate_tree_stats(tree)
+        tree["ingpo_max_depth"] = int(max_depth)
+        tree["ingpo_branch_factor_by_depth"] = dict(branch_factor_by_depth)
+
+        # Aggregate stats from the final tree once using the full SPO tree as
+        # denominator, so PRUNE/SHARE report how much work they skipped.
+        stats = aggregate_tree_stats(
+            tree,
+            max_depth=max_depth,
+            branch_factor_by_depth=branch_factor_by_depth,
+        )
         if stats:
             stats["ingpo/avg_tv_when_share"] = (
                 engine.stats.avg_tv_share if engine is not None else local_avg_tv_share

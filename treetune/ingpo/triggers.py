@@ -82,13 +82,11 @@ class TriggerStats:
 
     def as_dict(self) -> Dict[str, float]:
         total = self.expanded + self.shared + self.pruned
-        share_rate = self.shared / max(total, 1)
         prune_rate = self.pruned / max(total, 1)
         return {
             "ingpo/expanded_count": self.expanded,
             "ingpo/shared_count": self.shared,
             "ingpo/pruned_count": self.pruned,
-            "ingpo/share_rate": share_rate,
             "ingpo/prune_rate": prune_rate,
             "ingpo/avg_tv_when_share": self.avg_tv_share,
             "ingpo/avg_gap_when_prune": self.avg_gap_prune,

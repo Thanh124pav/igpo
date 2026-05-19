@@ -19,6 +19,9 @@
 
     inference_strategy+: {
       type: 'ingpo',
+      node_expander+: {
+        store_logprobs: true,
+      },
       ingpo_K: $.ingpo.K,
       ingpo_m: $.ingpo.m,
       ingpo_epsilon: $.ingpo.epsilon,

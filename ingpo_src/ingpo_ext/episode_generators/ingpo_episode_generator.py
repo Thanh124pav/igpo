@@ -49,8 +49,8 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
 
     def __init__(
         self,
-        ingpo_zero_advantage_when_pruned: bool = True,
-        ingpo_emit_pruned_edges: bool = False,
+        ingpo_zero_advantage_when_pruned: bool = False,
+        ingpo_emit_pruned_edges: bool = True,
         ingpo_share_inherit: str = "value_and_reward",  # or "value_only"
         ingpo_demo_examples_per_tree: int = 2,  # how many SHARE / PRUNE demos to log per tree
         ingpo_demos_dir: Optional[str] = None,  # absolute path; else exp_root/ingpo_demos

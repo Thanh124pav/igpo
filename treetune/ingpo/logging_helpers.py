@@ -27,35 +27,131 @@ def truncate(s: Optional[str], n: int = _DEMO_TEXT_TRUNC) -> str:
     return s if len(s) <= n else s[: n - 3] + "..."
 
 
-def aggregate_tree_stats(tree) -> Dict[str, float]:
-    """Walk the final tree once and aggregate action counts into the same
-    ``ingpo/...`` keys used by ``TriggerEngine.stats.as_dict()``.  This is the
-    single source of truth: by sharing the tree walk with
-    ``per_depth_action_counts`` we guarantee aggregate rates stay consistent
-    with the per-depth breakdown.
+def _coerce_depth_map(value: Optional[Dict[Any, Any]]) -> Dict[int, int]:
+    if not value:
+        return {}
+    out: Dict[int, int] = {}
+    for k, v in value.items():
+        try:
+            out[int(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _infer_max_depth(tree) -> int:
+    max_depth = 0
+    stack = [tree]
+    while stack:
+        n = stack.pop()
+        d = n.get("ingpo_depth")
+        if isinstance(d, int) and d > max_depth:
+            max_depth = d
+        stack.extend(n.get("children") or [])
+    return max_depth
+
+
+def _infer_branch_factors(tree) -> Dict[int, int]:
+    widths: Dict[int, int] = {}
+    stack = [tree]
+    while stack:
+        n = stack.pop()
+        d = n.get("ingpo_depth")
+        children = n.get("children") or []
+        if isinstance(d, int) and children:
+            widths[d] = max(widths.get(d, 0), len(children))
+        stack.extend(children)
+    return widths
+
+
+def _branch_factor_at(branch_factors: Dict[int, int], depth: int) -> int:
+    if depth in branch_factors:
+        return max(int(branch_factors[depth]), 0)
+    if not branch_factors:
+        return 0
+    earlier = [d for d in branch_factors if d <= depth]
+    if earlier:
+        return max(int(branch_factors[max(earlier)]), 0)
+    return max(int(branch_factors[min(branch_factors)]), 0)
+
+
+def _subtree_size_from_depth(depth: int, max_depth: int, branch_factors: Dict[int, int]) -> int:
+    if depth <= 0 or depth > max_depth:
+        return 0
+    total = 1
+    frontier = 1
+    for d in range(depth, max_depth):
+        w = _branch_factor_at(branch_factors, d)
+        if w <= 0:
+            break
+        frontier *= w
+        total += frontier
+    return total
+
+
+def aggregate_tree_stats(
+    tree,
+    max_depth: Optional[int] = None,
+    branch_factor_by_depth: Optional[Dict[Any, Any]] = None,
+) -> Dict[str, float]:
+    """Aggregate InGPO action counts and SPO-counterfactual prune rates.
+
+    ``spo_node_count`` uses the constructed tree for factual nodes, then adds
+    virtual descendants skipped by PRUNE/SHARE. This keeps EOS-short branches
+    from being inflated into a full W^D tree. ``prune_rate`` counts the full
+    SPO subtree removed by PRUNE, including the pruned node itself.
+    ``share_prune_rate`` counts only descendants skipped by SHARE, because the
+    shared node is still emitted as an edge.
     """
 
     counts: Counter = Counter()
+    prune_spo_count = 0
+    share_prune_spo_count = 0
+    virtual_pruned_spo_count = 0
+    max_depth = int(max_depth if max_depth is not None else tree.get("ingpo_max_depth") or _infer_max_depth(tree))
+    branch_factors = _coerce_depth_map(branch_factor_by_depth or tree.get("ingpo_branch_factor_by_depth"))
+    inferred = _infer_branch_factors(tree)
+    for d, w in inferred.items():
+        branch_factors[d] = max(branch_factors.get(d, 0), w)
+
     stack = [tree]
     while stack:
         n = stack.pop()
         a = n.get("ingpo_action")
-        if a is not None:
+        depth = n.get("ingpo_depth")
+        if a is not None and isinstance(depth, int) and depth > 0:
             counts[a] += 1
+            subtree_size = _subtree_size_from_depth(depth, max_depth, branch_factors)
+            virtual_descendants = max(subtree_size - 1, 0)
+            if a == "prune":
+                prune_spo_count += subtree_size
+                virtual_pruned_spo_count += virtual_descendants
+            elif a == "share":
+                share_prune_spo_count += virtual_descendants
+                virtual_pruned_spo_count += virtual_descendants
         stack.extend(n.get("children") or [])
 
     expanded = counts.get("expand", 0)
     shared = counts.get("share", 0)
     pruned = counts.get("prune", 0)
-    total = expanded + shared + pruned
-    if total == 0:
+    total_visible = expanded + shared + pruned
+    total_spo = total_visible + virtual_pruned_spo_count
+    if total_visible == 0 and total_spo == 0:
         return {}
+    total_pruned_spo = prune_spo_count + share_prune_spo_count
     return {
         "ingpo/expanded_count": expanded,
         "ingpo/shared_count": shared,
         "ingpo/pruned_count": pruned,
-        "ingpo/share_rate": shared / total,
-        "ingpo/prune_rate": pruned / total,
+        "ingpo/factual_node_count": total_visible,
+        "ingpo/virtual_pruned_spo_count": virtual_pruned_spo_count,
+        "ingpo/spo_node_count": total_spo,
+        "ingpo/pruned_spo_count": prune_spo_count,
+        "ingpo/share_pruned_spo_count": share_prune_spo_count,
+        "ingpo/total_pruned_spo_count": total_pruned_spo,
+        "ingpo/prune_rate": prune_spo_count / max(total_spo, 1),
+        "ingpo/share_prune_rate": share_prune_spo_count / max(total_spo, 1),
+        "ingpo/total_prune_rate": total_pruned_spo / max(total_spo, 1),
     }
 
 
@@ -83,8 +179,6 @@ def per_depth_action_counts(tree) -> Dict[str, float]:
         out[f"ingpo/depth_{d}/expand_count"] = c.get("expand", 0)
         out[f"ingpo/depth_{d}/share_count"] = c.get("share", 0)
         out[f"ingpo/depth_{d}/prune_count"] = c.get("prune", 0)
-        out[f"ingpo/depth_{d}/share_rate"] = c.get("share", 0) / total
-        out[f"ingpo/depth_{d}/prune_rate"] = c.get("prune", 0) / total
     return out
 
 
@@ -153,10 +247,13 @@ def render_md_section(
 
     out = [f"## Tree #{tree_idx}  (question_id={question_id})\n"]
     if stats:
-        share_rate = float(stats.get("ingpo/share_rate", 0.0) or 0.0)
         prune_rate = float(stats.get("ingpo/prune_rate", 0.0) or 0.0)
+        share_prune_rate = float(stats.get("ingpo/share_prune_rate", 0.0) or 0.0)
+        total_prune_rate = float(stats.get("ingpo/total_prune_rate", 0.0) or 0.0)
         out.append(
-            f"- share_rate: **{share_rate:.3f}**, prune_rate: **{prune_rate:.3f}**, "
+            f"- prune_rate: **{prune_rate:.3f}**, "
+            f"share_prune_rate: **{share_prune_rate:.3f}**, "
+            f"total_prune_rate: **{total_prune_rate:.3f}**, "
             f"#shared={stats.get('ingpo/shared_count', 0)}, "
             f"#pruned={stats.get('ingpo/pruned_count', 0)}, "
             f"#expanded={stats.get('ingpo/expanded_count', 0)}\n"
