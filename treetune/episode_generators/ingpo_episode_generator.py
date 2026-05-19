@@ -264,9 +264,9 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         if self._ingpo_demos_dir_override:
             base = Path(self._ingpo_demos_dir_override)
         elif getattr(self, "exp_root", None) is not None:
-            base = Path(self.exp_root) / "ingpo_demos"
+            base = Path(self.exp_root) / "demos" / "ingpo"
         else:
-            base = Path.cwd() / "ingpo_demos"
+            base = Path.cwd() / "demos" / "ingpo"
 
         try:
             base.mkdir(parents=True, exist_ok=True)
@@ -288,7 +288,7 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
             if self._ingpo_md_handle.tell() == 0:
                 self._ingpo_md_handle.write(
                     "# InGPO SHARE / PRUNE demos\n\n"
-                    "One section per tree. `tail -F demos.md` to follow live.\n\n"
+                    "One section per tree. Full sample text is preserved.\n\n"
                 )
         return self._ingpo_jsonl_handle, self._ingpo_md_handle
 
@@ -329,7 +329,10 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         if not (demo_rows["share"] or demo_rows["prune"]):
             return
         try:
-            md.write(render_md_section(tree_idx, question_id, stats, demo_rows))
+            md_stats = dict(stats or {})
+            if tree_construction_seconds is not None:
+                md_stats["tree_construction_seconds"] = tree_construction_seconds
+            md.write(render_md_section(tree_idx, question_id, md_stats, demo_rows))
         except Exception as exc:
             logger.warning(f"InGPO: failed to append demos.md: {exc}")
 

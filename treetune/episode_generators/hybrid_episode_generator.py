@@ -17,6 +17,7 @@ from treetune.common import Lazy
 from treetune.common.vllm_server import VLLMServer
 from treetune.episode_generators import EpisodeGenerator, MathEpisodeGenerator
 from treetune.episode_generators.base_episode_generator import Episode
+from treetune.episode_generators.demo_logging import DemoFileLogger
 from treetune.inference_strategies import InferenceStrategy
 from treetune.logging_utils import get_logger
 from treetune.episode_generators.exception import NoTrainingDataException
@@ -93,6 +94,8 @@ class HybridEpisodeGenerator(MathEpisodeGenerator):
         only_adv_greater_than_zero: Optional[bool] = True,
         use_hard_estimation: Optional[bool] = False,
         use_pav: Optional[bool] = False,
+        spo_demo_examples_per_iteration: int = 8,
+        spo_demos_dir: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -112,6 +115,12 @@ class HybridEpisodeGenerator(MathEpisodeGenerator):
         self.only_adv_greater_than_zero = only_adv_greater_than_zero
         self.use_hard_estimation = use_hard_estimation
         self.use_pav = use_pav
+        self.spo_demo_examples_per_iteration = int(spo_demo_examples_per_iteration)
+        self._spo_demo_logger = DemoFileLogger(
+            algorithm="spo",
+            exp_root=self.exp_root,
+            demos_dir=spo_demos_dir,
+        )
 
     def _run_inference(
         self,
@@ -239,6 +248,11 @@ class HybridEpisodeGenerator(MathEpisodeGenerator):
 
             # Get edges for this iteration
             edges_this_iteration, discard_cnt = self.replay_buffer.get_edges(iteration)
+            self._spo_demo_logger.log_samples(
+                edges_this_iteration,
+                iteration=iteration,
+                limit=self.spo_demo_examples_per_iteration,
+            )
             # assert discard_cnt == 0
             self._cloud_log({"replay_buffer/discard_cnt": discard_cnt, 
                                     "replay_buffer/samples": len(edges_this_iteration),  

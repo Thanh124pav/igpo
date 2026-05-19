@@ -10,7 +10,7 @@ from collections import Counter
 from typing import Any, Dict, List, Optional
 
 
-_DEMO_TEXT_TRUNC = 240
+_DEMO_TEXT_TRUNC = None
 
 
 DEMO_COLUMNS = [
@@ -20,10 +20,12 @@ DEMO_COLUMNS = [
 ]
 
 
-def truncate(s: Optional[str], n: int = _DEMO_TEXT_TRUNC) -> str:
+def truncate(s: Optional[str], n: Optional[int] = _DEMO_TEXT_TRUNC) -> str:
     if not s:
         return ""
     s = s.replace("\n", " \\n ")
+    if n is None:
+        return s
     return s if len(s) <= n else s[: n - 3] + "..."
 
 
@@ -247,6 +249,11 @@ def render_md_section(
 
     out = [f"## Tree #{tree_idx}  (question_id={question_id})\n"]
     if stats:
+        if stats.get("tree_construction_seconds") is not None:
+            out.append(
+                f"- tree_construction_seconds: "
+                f"**{float(stats.get('tree_construction_seconds')):.3f}**\n"
+            )
         prune_rate = float(stats.get("ingpo/prune_rate", 0.0) or 0.0)
         share_prune_rate = float(stats.get("ingpo/share_prune_rate", 0.0) or 0.0)
         total_prune_rate = float(stats.get("ingpo/total_prune_rate", 0.0) or 0.0)
