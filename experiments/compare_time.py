@@ -201,15 +201,10 @@ def load_training_timing(stats: ExperimentStats) -> None:
 
 
 def load_tree_construction(stats: ExperimentStats) -> None:
-    demos_path = stats.path / "ingpo_demos" / "demos.jsonl"
-    if demos_path.exists():
-        for record in read_jsonl(demos_path):
-            value = as_float(record.get("tree_construction_seconds"))
-            if value is not None:
-                stats.tree_construction_seconds.append(value)
-        return
-
-    for tree_path in stats.path.glob("iteration_*/episodes/**/*.json"):
+    tree_values = []
+    tree_paths = list(stats.path.glob("iteration_*/**/trees/*.json"))
+    tree_paths.extend(stats.path.glob("iteration_*/episodes/**/*.json"))
+    for tree_path in sorted(set(tree_paths)):
         try:
             with tree_path.open("r", encoding="utf-8") as fh:
                 tree = json.load(fh)
@@ -218,7 +213,44 @@ def load_tree_construction(stats: ExperimentStats) -> None:
         except Exception:
             continue
         if isinstance(tree, dict):
-            value = as_float(tree.get("ingpo_tree_construction_seconds"))
+            value = first_number(
+                tree,
+                (
+                    "tree_construction_seconds",
+                    "ingpo_tree_construction_seconds",
+                ),
+            )
+            if value is not None:
+                tree_values.append(value)
+
+    if tree_values:
+        stats.tree_construction_seconds.extend(tree_values)
+        return
+
+    demo_paths = [
+        stats.path / "ingpo_demos" / "demos.jsonl",
+        stats.path / "demos" / "ingpo" / "demos.jsonl",
+        stats.path / "demos" / "spo" / "samples.jsonl",
+        stats.path / "demos" / "spo" / "sample.jsonl",
+        stats.path / "demos" / "grpo" / "samples.jsonl",
+        stats.path / "demos" / "grpo" / "sample.jsonl",
+    ]
+    demo_paths.extend(sorted((stats.path / "demos").glob("*/*.jsonl")))
+
+    seen_paths = set()
+    for demos_path in demo_paths:
+        if demos_path in seen_paths or not demos_path.exists():
+            continue
+        seen_paths.add(demos_path)
+        for record in read_jsonl(demos_path):
+            value = first_number(
+                record,
+                (
+                    "tree_construction_seconds",
+                    "ingpo_tree_construction_seconds",
+                    "timing/tree_construction_seconds",
+                ),
+            )
             if value is not None:
                 stats.tree_construction_seconds.append(value)
 
