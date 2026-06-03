@@ -1,0 +1,6 @@
+// Simulation-lemma budget-allocation tree on GSM8K with Rho-1.1B-SFT.
+// Matched to shipped SPO, GRPO, and VinePPO GSM8K baselines.
+(import 'polIter_rho1bSft2_spo_tree_GSM8K.jsonnet')
++ (import 'ingpo_defaults.libsonnet')
++ (import 'ablations/abl_budget_allocation.jsonnet')
++ (import 'ingpo_overlay.libsonnet')

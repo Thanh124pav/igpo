@@ -10,7 +10,7 @@ The decision flow follows PLAN Algorithm 3:
 
   1. Score K fast indices for the new segment s.
   2. FindNearest in the BST. If close enough, fill full m and check TV_m.
-     If R_max * gamma / (1-gamma)^2 * TV_m <= epsilon -> SHARE.
+     If the epsilon_T formula with epsilon_T / 2 = TV_m is <= epsilon -> SHARE.
   3. Else compare AvgLP_K(s) with AvgLP_K(pa). If much lower, fill full and
      check AvgLP_m gap. If still lower by eta -> PRUNE.
   4. Else INSERT into BST and let the caller expand children.

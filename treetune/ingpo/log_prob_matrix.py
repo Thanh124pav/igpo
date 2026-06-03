@@ -16,7 +16,6 @@ import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
-import numpy as np
 
 
 @dataclass
@@ -26,13 +25,13 @@ class SegmentLP:
     segment_id: str
     K: int
     m: int
-    fast: np.ndarray
-    full: Optional[np.ndarray] = None
+    fast: List[float]
+    full: Optional[List[float]] = None
     prefix: Optional[str] = None  # traj(s) used to score this row
 
     @property
     def avg_lp_K(self) -> float:
-        return float(np.mean(self.fast))
+        return float(sum(self.fast) / len(self.fast))
 
     @property
     def has_full(self) -> bool:
@@ -42,7 +41,7 @@ class SegmentLP:
     def avg_lp_m(self) -> float:
         if self.full is None:
             raise RuntimeError(f"Full LP vector not computed for {self.segment_id}")
-        return float(np.mean(self.full))
+        return float(sum(self.full) / len(self.full))
 
     def delta(self) -> float:
         """log( 1 - sum_i exp(LP[i]) ) using the full vector if available."""
@@ -55,14 +54,14 @@ class SegmentLP:
         return math.log(residual)
 
 
-def _logsumexp(arr: np.ndarray) -> float:
-    arr = np.asarray(arr, dtype=np.float64)
-    if arr.size == 0:
+def _logsumexp(arr: Sequence[float]) -> float:
+    vals = [float(x) for x in arr]
+    if not vals:
         return -math.inf
-    m = float(np.max(arr))
+    m = max(vals)
     if not math.isfinite(m):
         return m
-    return m + math.log(float(np.sum(np.exp(arr - m))))
+    return m + math.log(sum(math.exp(x - m) for x in vals))
 
 
 class LogProbMatrix:
@@ -92,7 +91,7 @@ class LogProbMatrix:
             segment_id=segment_id,
             K=self.K,
             m=self.m,
-            fast=np.asarray(fast, dtype=np.float64),
+            fast=[float(x) for x in fast],
             prefix=prefix,
         )
         with self._lock:
@@ -120,7 +119,7 @@ class LogProbMatrix:
         with self._lock:
             row = self._rows[segment_id]
             if row.full is None:
-                row.full = np.concatenate([row.fast, np.asarray(tail, dtype=np.float64)])
+                row.full = list(row.fast) + [float(x) for x in tail]
         return row
 
     def avg_delta(self) -> float:
@@ -130,7 +129,8 @@ class LogProbMatrix:
             rows = [r for r in self._rows.values() if r.has_full]
         if not rows:
             return 0.0
-        return float(np.mean([math.exp(r.delta()) for r in rows]))
+        vals = [math.exp(r.delta()) for r in rows]
+        return float(sum(vals) / len(vals))
 
     def __len__(self) -> int:
         with self._lock:

@@ -3,11 +3,9 @@
     inference_strategy+: {
       max_depth: 3,
       branch_factor_strategy+: {
-        branch_factors: [
-          { depth: 0, branch_factor: 6 },
-          { depth: 1, branch_factor: 6 },
-          { depth: 2, branch_factor: 6 },
-        ],
+        // New tree-shape format: cumulative node counts at each depth.
+        // This is equivalent to the legacy 6-6-6 branch-factor config.
+        tree_shape: [6, 36, 216],
       },
     },
   },

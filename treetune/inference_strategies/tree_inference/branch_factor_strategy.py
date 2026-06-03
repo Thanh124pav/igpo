@@ -1,7 +1,11 @@
-from typing import Dict, Tuple, List
+from typing import Any, Dict, List, Optional, Sequence
 
 from treetune.common import Registrable
-from treetune.inference_strategies.tree_inference import Node
+
+Node = Dict[str, Any]
+from treetune.logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class BranchFactorStrategy(Registrable):
@@ -24,18 +28,58 @@ class ConstantBranchFactor(BranchFactorStrategy):
 
 @BranchFactorStrategy.register("list", exist_ok=True)
 class ListBranchFactor(BranchFactorStrategy):
-    def __init__(self, branch_factors: List[Dict[str, int]]):
+    def __init__(
+        self,
+        branch_factors: Optional[List[Dict[str, int]]] = None,
+        tree_shape: Optional[Sequence[int]] = None,
+    ):
         """
-        :param branch_factors: a list of dictionaries, which has two keys: "depth" and "branch_factor".
-        The list should be sorted by "depth" in ascending order.
-        which means if depth is in  [branch_factors[i]['depth'], branch_factors[i+1]['depth']), then
-        the branch factor is branch_factors[i]['branch_factor'].
+        New format: ``tree_shape`` is the cumulative number of nodes at each
+        depth.  For example, an old 6-6-6 tree is represented as
+        ``tree_shape=[6, 36, 216]`` and is converted to branch factors
+        ``[6, 6, 6]``.
+
+        Legacy format: ``branch_factors`` is a list of ``{"depth": d,
+        "branch_factor": b}`` entries.  It is still supported and logs a
+        warning so older configs keep running.
         """
         super().__init__()
+        if tree_shape is not None:
+            self.branch_factors = self._from_tree_shape(tree_shape)
+            return
+
+        if branch_factors is None:
+            raise ValueError(
+                "ListBranchFactor requires either tree_shape or legacy branch_factors"
+            )
+        logger.warning(
+            "Using legacy branch_factors config; prefer tree_shape cumulative node counts."
+        )
         assert len(branch_factors) > 0, "branch_factors should not be empty, use at least {'depth': 0, 'branch_factor': x}}"
         self.branch_factors = sorted(branch_factors, key=lambda x: x["depth"])
         if self.branch_factors[0]['depth'] != 0:
             raise ValueError("The first depth must be 0")
+
+    def _from_tree_shape(self, tree_shape: Sequence[int]) -> List[Dict[str, int]]:
+        if not tree_shape:
+            raise ValueError("tree_shape should not be empty")
+        cumulative = [int(x) for x in tree_shape]
+        if any(x <= 0 for x in cumulative):
+            raise ValueError(f"tree_shape values must be positive: {tree_shape}")
+        branch_factors: List[Dict[str, int]] = []
+        prev = 1
+        for depth, count in enumerate(cumulative):
+            if count % prev != 0:
+                logger.warning(
+                    "tree_shape[%s]=%s is not divisible by previous depth node count %s; using floor division.",
+                    depth,
+                    count,
+                    prev,
+                )
+            branch_factor = max(count // prev, 1)
+            branch_factors.append({"depth": depth, "branch_factor": branch_factor})
+            prev = count
+        return branch_factors
 
     def decide_branch_factor(self, node: Node) -> int:
         depth = node["depth"]
@@ -60,9 +104,3 @@ class FishBoneBranchFactor(BranchFactorStrategy):
             return self.fish_bone_samples
         else:
             return 1
-
-
-
-
-
-

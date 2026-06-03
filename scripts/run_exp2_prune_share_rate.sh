@@ -6,7 +6,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 TREE="${TREE:-${INGPO_TREE:-666}}"
-EXP_NAME="${APP_EXPERIMENT_NAME:-exp2-prune-share-${TREE}-qwen1.5b-math}"
+EXP_NAME="${APP_EXPERIMENT_NAME:-exp2-prune-share-${TREE}-qwen2.5-1.5b-math}"
 
 CFGS="${INGPO_ROOT}/configs/polIter_qwen1_5b_base_ingpo_tree_MATH.jsonnet"
 CFGS+=",$(ensure_tree_config "${TREE}")"

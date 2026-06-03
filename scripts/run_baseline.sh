@@ -16,7 +16,7 @@ CFG="${INGPO_ROOT}/configs/baselines/${NAME}.jsonnet"
 
 CFGS="${CFG}"
 TREE="${TREE:-${INGPO_TREE:-}}"
-if [[ "${NAME}" == *spo_tree* && -n "${TREE}" ]]; then
+if [[ ("${NAME}" == *spo_tree* || "${NAME}" == *budget_alloc_tree*) && -n "${TREE}" ]]; then
   CFGS+=",$(ensure_tree_config "${TREE}")"
 fi
 

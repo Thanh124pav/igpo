@@ -1,7 +1,9 @@
 local hf_model_name = '/workspace/storage-shared/models/DeepSeek-R1-Distill-Qwen-1.5B';
 
-local task = (import 'tasks/point24.jsonnet');
-
+local math_task = (import 'tasks/math_inplace_no_answer_prefix.jsonnet') + {
+  prepend_in_context_few_shot: false,
+  ensure_fit_in_context_size: false,
+};
 local num_episodes_per_iteration = 512;
 local num_rollouts_per_sample = 8;
 local num_dataset_samples_per_iteration = num_episodes_per_iteration / num_rollouts_per_sample;
@@ -13,19 +15,20 @@ local num_mc_rollouts = 4;
 
 
 (import 'gvar.jsonnet')
-+ (import 'prompt_library/qwen_point24.jsonnet')
++ (import 'prompt_library/qwen_MATH.jsonnet')
 + (import 'runtimes/policy_iteration.jsonnet')
 + (import 'trainers/ppo_MATH.jsonnet')
 + {
   episode_generator+: {
     type: 'math_episode_generator_w_mc_advantages',
     // Override the task
-    task: task,
-    reward_function+: {
-      type: 'point24_function',
+    task: math_task,
+
+    reward_function: {
+      type: 'math_reward_function',
       penalize_unfinished_response: true,
-      unfinished_response_penalty: 0,
-      task: $.episode_generator.task,
+      unfinished_response_penalty: 0.0,
+      math_task: $.episode_generator.task,
     },
 
     initial_model_name_or_path: hf_model_name,
@@ -43,7 +46,7 @@ local num_mc_rollouts = 4;
     },
 
     max_sequence_length: null,
-    max_question_length: null,
+    max_question_length: 200,
     question_sampler: {
       type: 'random',  // not used
     },
@@ -82,7 +85,7 @@ local num_mc_rollouts = 4;
         node_text_template: '{chain_of_thought}',
 
         // Needed to compute max_tokens on the fly
-        model_context_size: 4096,  // Long CoT
+        model_context_size: 2048,  // Long CoT
         tokenizer: $.tokenizer,
       },
 
@@ -91,7 +94,7 @@ local num_mc_rollouts = 4;
         node_key_name: 'text',
       },
 
-      guidance_llm: (import 'guidance_llms/qwen1b.jsonnet') + { api_base: 'none' },
+      guidance_llm: (import 'guidance_llms/deepseekR1Qwen.jsonnet') + { api_base: 'none' },
 
       question_field: 'query',
       question_template: $.prompt_library.tree.question_template,
@@ -151,22 +154,23 @@ local num_mc_rollouts = 4;
     reference_model+: { hf_model_name: $.episode_generator.initial_model_name_or_path },
 
     actor_deepspeed_config: (import 'deepspeed/zero_0.jsonnet'),
+    move_reference_model_to_cpu: true,
 
     // To prevent OOM errors
     report_entropy: false,
 
     general_training_args+: {
-      target_train_batch_size: 512,
+      target_train_batch_size: 128,
       per_device_train_batch_size: 2,
       per_device_eval_batch_size: 2,
       gradient_accumulation_steps: null,  // Will be auto computed
       save_steps: 5,
-      checkpoint_keep_steps: 40,
+      checkpoint_keep_steps: 10,
     },
 
   },
 }
-+ (import 'qwen1b_for_point24_eval.jsonnet')
++ (import 'deepseekR1Qwen_for_MATH_eval.jsonnet')
 + (import 'trainers/lam1.jsonnet')
-+ (import 'trainers/refKl0.001.jsonnet')
++ (import 'trainers/refKl0.0001.jsonnet')
 + (import 'trainers/klLoss.jsonnet')

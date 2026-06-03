@@ -37,7 +37,7 @@ local point24_inference_pipeline =
       samples: num_samples,
       max_depth: 10,
 
-      guidance_llm: (import 'guidance_llms/qwen1b.jsonnet') + { api_base: 'none' },
+      guidance_llm: (import 'guidance_llms/deepseekR1Qwen.jsonnet') + { api_base: 'none' },
       no_cache: false,
       question_field: 'query',
 
