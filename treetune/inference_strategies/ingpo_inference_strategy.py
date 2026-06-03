@@ -286,6 +286,14 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 texts.append(text)
                 if len(texts) >= self.ingpo_m:
                     break
+            # Early-trigger path: before probe expansion, a node may not have
+            # any children yet. In that case, fall back to using the node text
+            # itself as a single continuation anchor so local comparisons can
+            # run without waiting for full sibling probe barriers.
+            if not texts:
+                own = node.get("text", "")
+                if own:
+                    texts.append(own)
             return texts
 
         async def _score_local_tv(
@@ -333,7 +341,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 child for child in siblings
                 if child.get("ingpo_action") == Action.EXPAND.value
                 and not child.get("leaf", False)
-                and child.get("children")
             ]
             if len(candidates) < 2:
                 return
@@ -355,18 +362,20 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 src = candidates[j]
                 tgt = candidates[i]
 
-                continuations = []
-                seen = set()
-                for text in _continuation_texts(src) + _continuation_texts(tgt):
-                    if text in seen:
-                        continue
-                    seen.add(text)
-                    continuations.append(text)
-                    if len(continuations) >= self.ingpo_m:
-                        break
+                # Build pair support from both siblings explicitly: take a
+                # portion from src children and a portion from tgt children,
+                # then deduplicate while preserving the per-side intent.
+                src_texts = _continuation_texts(src)
+                tgt_texts = _continuation_texts(tgt)
+                per_side = max(1, int(self.ingpo_m // 2))
+                src_take = src_texts[:per_side]
+                tgt_take = tgt_texts[:per_side]
+
+                continuations = list(src_take) + list(tgt_take)
+
                 if not continuations:
                     continue
-                pair_jobs.append((src, tgt, continuations))
+                pair_jobs.append((src, tgt, continuations[: max(1, int(self.ingpo_m))]))
 
             async def _score_pair_tv(src: Node, tgt: Node, continuations: Sequence[str]):
                 try:
@@ -519,6 +528,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
 
             local_engine = await _ensure_engine()
 
+            # Run local sibling triggers early (before probing every child) so
+            # share/prune can stop branches without paying extra probe cost.
+            if self.ingpo_local_value_share and (self.ingpo_enable_share or self.ingpo_enable_prune):
+                await _try_local_value_share_and_prune(node, children)
+
             probe_tasks = []
             for ch_idx, child in enumerate(children):
                 child_seg_id = child.get(
@@ -617,9 +631,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     probe["ingpo_depth"] = depth + 2
                     probe["ingpo_parent_segment_id"] = child["ingpo_segment_id"]
                 child["children"] = probe_children
-
-            if self.ingpo_local_value_share and (self.ingpo_enable_share or self.ingpo_enable_prune):
-                await _try_local_value_share_and_prune(node, children)
 
             expansion_tasks = []
             for child in children:
