@@ -13,7 +13,11 @@ import math
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple
 
-import numpy as np
+
+
+class ProbabilityList(list):
+    def sum(self) -> float:
+        return float(sum(self))
 
 
 @dataclass
@@ -27,20 +31,19 @@ class LocalShareDecision:
     eta_used: float
 
 
-def stable_softmax(logps: Sequence[float]) -> np.ndarray:
-    arr = np.asarray(logps, dtype=np.float64)
-    if arr.size == 0:
-        return arr
-    finite = np.isfinite(arr)
-    if not bool(np.any(finite)):
-        return np.full(arr.shape, 1.0 / arr.size, dtype=np.float64)
-    max_lp = float(np.max(arr[finite]))
-    shifted = np.where(finite, arr - max_lp, -math.inf)
-    exp_shifted = np.exp(shifted)
-    denom = float(np.sum(exp_shifted))
+def stable_softmax(logps: Sequence[float]) -> List[float]:
+    vals = [float(x) for x in logps]
+    if not vals:
+        return ProbabilityList()
+    finite = [x for x in vals if math.isfinite(x)]
+    if not finite:
+        return ProbabilityList([1.0 / len(vals)] * len(vals))
+    max_lp = max(finite)
+    exp_shifted = [math.exp(x - max_lp) if math.isfinite(x) else 0.0 for x in vals]
+    denom = sum(exp_shifted)
     if denom <= 0.0 or not math.isfinite(denom):
-        return np.full(arr.shape, 1.0 / arr.size, dtype=np.float64)
-    return exp_shifted / denom
+        return ProbabilityList([1.0 / len(vals)] * len(vals))
+    return ProbabilityList([x / denom for x in exp_shifted])
 
 
 def sampled_tv_from_logps(logps_a: Sequence[float], logps_b: Sequence[float]) -> float:
@@ -50,7 +53,7 @@ def sampled_tv_from_logps(logps_a: Sequence[float], logps_b: Sequence[float]) ->
         return 1.0
     pa = stable_softmax(logps_a)
     pb = stable_softmax(logps_b)
-    return 0.5 * float(np.sum(np.abs(pa - pb)))
+    return 0.5 * sum(abs(a - b) for a, b in zip(pa, pb))
 
 
 def confidence_radius(n: int, alpha: float) -> float:

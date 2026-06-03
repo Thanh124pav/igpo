@@ -29,7 +29,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Sequence
 
-import numpy as np
+import math
 import openai
 
 from treetune.common import Lazy
@@ -47,6 +47,9 @@ from treetune.ingpo.answer_set import (
 )
 from treetune.ingpo.logging_helpers import aggregate_tree_stats
 from treetune.ingpo.thresholds import ThresholdConfig, tv_to_value_bound
+from treetune.ingpo.budget_allocation import allocate_branch_factors
+from treetune.ingpo.budget_scheduler import FlexibleBudgetScheduler
+from treetune.ingpo.tv_estimators import ConditionalTVEstimator
 from treetune.ingpo.triggers import Action, TriggerEngine
 from treetune.ingpo.local_value_share import (
     LocalShareDecision,
@@ -85,6 +88,16 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_y_max_tokens: int = 512,
         ingpo_y_field: str = "answer",  # field on data_instance with gold
         ingpo_score_concurrency: int = 64,
+        ingpo_algorithm_mode: str = "share_prune",
+        ingpo_tv_estimator: str = "subnode",
+        ingpo_n_tv_estimates: int = 8,
+        ingpo_tv_subnode_max_tokens: int = 120,
+        ingpo_tv_second_phase_tokens: int = 60,
+        ingpo_tv_includes_half_factor: bool = False,
+        ingpo_budget_lambda: float = 0.02,
+        ingpo_budget_overhead_mode: str = "flexible",
+        ingpo_budget_queue_count: int = 2,
+        ingpo_budget_queue_timeout_seconds: float = 0.5,
         # Inherited ----------------------------------------------------------
         **kwargs: Any,
     ):
@@ -110,6 +123,20 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_y_max_tokens = int(ingpo_y_max_tokens)
         self.ingpo_y_field = ingpo_y_field
         self.ingpo_score_concurrency = int(ingpo_score_concurrency)
+        if ingpo_algorithm_mode not in {"share_prune", "budget_allocation"}:
+            raise ValueError(f"Unsupported ingpo_algorithm_mode: {ingpo_algorithm_mode}")
+        if ingpo_budget_overhead_mode not in {"flexible", "none"}:
+            raise ValueError(f"Unsupported ingpo_budget_overhead_mode: {ingpo_budget_overhead_mode}")
+        self.ingpo_algorithm_mode = ingpo_algorithm_mode
+        self.ingpo_tv_estimator = ingpo_tv_estimator
+        self.ingpo_n_tv_estimates = int(ingpo_n_tv_estimates)
+        self.ingpo_tv_subnode_max_tokens = int(ingpo_tv_subnode_max_tokens)
+        self.ingpo_tv_second_phase_tokens = int(ingpo_tv_second_phase_tokens)
+        self.ingpo_tv_includes_half_factor = bool(ingpo_tv_includes_half_factor)
+        self.ingpo_budget_lambda = float(ingpo_budget_lambda)
+        self.ingpo_budget_overhead_mode = ingpo_budget_overhead_mode
+        self.ingpo_budget_queue_count = int(ingpo_budget_queue_count)
+        self.ingpo_budget_queue_timeout_seconds = float(ingpo_budget_queue_timeout_seconds)
         self._lp_client: Optional[VLLMLogprobClient] = None
 
     # ------------------------------------------------------------------
@@ -190,6 +217,13 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         max_depth: int = 2,
         data_instance: Optional[Dict[str, Any]] = None,
     ):
+        if self.ingpo_algorithm_mode == "budget_allocation":
+            return await self._construct_budget_allocated_tree(
+                initial_prompt=initial_prompt,
+                max_depth=max_depth,
+                data_instance=data_instance,
+            )
+
         t0_tree = time.time()
         client = self._ensure_lp_client()
         scorer = make_lp_scorer(client, self._tokenize)
@@ -490,12 +524,12 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             child_rewards = []
             for ch in node.get("children", []) or []:
                 r = ch.get("reward")
-                if r is None or (isinstance(r, float) and np.isnan(r)):
+                if r is None or (isinstance(r, float) and math.isnan(r)):
                     continue
                 child_rewards.append(r)
             if child_rewards:
-                node["reward"] = float(np.mean(child_rewards))
-                node["reward_std"] = float(np.std(child_rewards))
+                node["reward"] = float(sum(child_rewards) / len(child_rewards))
+                node["reward_std"] = float((sum((x - (sum(child_rewards) / len(child_rewards))) ** 2 for x in child_rewards) / len(child_rewards)) ** 0.5)
             else:
                 node["reward"] = 0.0
                 node["reward_std"] = 0.0
@@ -671,6 +705,261 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         tree["ingpo_answer_set_size"] = answer_set.m
         tree["ingpo_tree_construction_seconds"] = time.time() - t0_tree
         tree["ingpo_problem_id"] = problem_id
+        return tree
+
+    async def _construct_budget_allocated_tree(
+        self,
+        initial_prompt: str,
+        max_depth: int = 2,
+        data_instance: Optional[Dict[str, Any]] = None,
+    ):
+        """Construct a tree with simulation-lemma budget allocation.
+
+        This path disables the legacy TV SHARE/PRUNE triggers.  TV estimates
+        are used only to compute reward variance at each frontier node, then a
+        floor-only branch budget is assigned across nodes.  TV candidate
+        prefixes are reused as the real child prefixes when selected.
+        """
+
+        t0_tree = time.time()
+        client = self._ensure_lp_client()
+        scorer = make_lp_scorer(client, self._tokenize)
+        problem_id = str(data_instance.get("_treetune__idx", uuid.uuid4())) if data_instance else str(uuid.uuid4())
+        logger.info(
+            "InGPO budget-allocation mode active: TV share/prune disabled; "
+            "TV used only for reward variance. overhead_mode=%s",
+            self.ingpo_budget_overhead_mode,
+        )
+
+        tree: Node = {
+            "text": initial_prompt,
+            "depth": 0,
+            "full_text": initial_prompt,
+            "stop_text": "aaa",
+            "_request_object": data_instance,
+            "leaf": False,
+            "ingpo_action": Action.EXPAND.value,
+            "ingpo_segment_id": "root",
+            "ingpo_algorithm_mode": "budget_allocation",
+        }
+
+        tv_estimator = ConditionalTVEstimator(
+            scorer=scorer,
+            node_expander=self.node_expander,
+            gamma=self.cfg_thresholds.gamma,
+            mode=self.ingpo_tv_estimator,
+            n_tv_estimates=self.ingpo_n_tv_estimates,
+            first_phase_tokens=self.ingpo_tv_subnode_max_tokens,
+            second_phase_tokens=self.ingpo_tv_second_phase_tokens,
+            tv_includes_half_factor=self.ingpo_tv_includes_half_factor,
+        )
+
+        branch_factor_by_depth: Dict[int, int] = {}
+        allocated_by_depth: Dict[int, int] = {}
+        underallocated_by_depth: Dict[int, int] = {}
+        variance_seconds_by_depth: Dict[int, float] = {}
+        allocation_seconds_by_depth: Dict[int, float] = {}
+        expansion_seconds_by_depth: Dict[int, float] = {}
+
+        async def _expand_with_budget(
+            *,
+            current_node: Node,
+            prefix: str,
+            depth: int,
+            max_tokens: Optional[int],
+            branch_factor: int,
+        ) -> List[Node]:
+            if branch_factor <= 0:
+                return []
+            try:
+                return await self.node_expander.expand(
+                    current_node=current_node,
+                    prefix=prefix,
+                    depth=depth,
+                    max_tokens=max_tokens,
+                    branch_factor=branch_factor,
+                )
+            except TypeError:
+                logger.warning(
+                    "Node expander does not accept branch_factor override; falling back to configured strategy."
+                )
+                return await self.node_expander.expand(
+                    current_node=current_node,
+                    prefix=prefix,
+                    depth=depth,
+                    max_tokens=max_tokens,
+                )
+
+        async def _complete_candidate(parent: Node, candidate: Node, depth: int, child_idx: int) -> Node:
+            child = dict(candidate)
+            child["ingpo_segment_id"] = f"{parent.get('ingpo_segment_id', 'root')}/{depth}/{child_idx}"
+            child["ingpo_parent_segment_id"] = parent.get("ingpo_segment_id", "root")
+            child["ingpo_depth"] = depth + 1
+            child["ingpo_action"] = Action.EXPAND.value
+            child["depth"] = depth + 1
+            child["leaf"] = False
+
+            finish_reason = child.get("finish_reason")
+            if finish_reason != "length" or depth + 1 >= max_depth:
+                child["reward"], _ = self.reward_function(
+                    query=parent.get("full_text", ""),
+                    response=child.get("full_text", child.get("text", "")),
+                    dataset_instance=data_instance,
+                )
+                child["leaf"] = True
+                return child
+
+            continuation_budget = self.M
+            if self.ingpo_tv_subnode_max_tokens > 0:
+                continuation_budget = max(int(self.M) - self.ingpo_tv_subnode_max_tokens, 1)
+            continuations = await _expand_with_budget(
+                current_node=child,
+                prefix=child.get("full_text", ""),
+                depth=depth + 1,
+                max_tokens=continuation_budget,
+                branch_factor=1,
+            )
+            if continuations:
+                cont = continuations[0]
+                child["text"] = child.get("text", "") + cont.get("text", "")
+                child["full_text"] = cont.get("full_text", child.get("full_text", ""))
+                child["finish_reason"] = cont.get("finish_reason", child.get("finish_reason"))
+                child["stop_text"] = cont.get("stop_text", child.get("stop_text"))
+                if child.get("sum_logprobs") is not None and cont.get("sum_logprobs") is not None:
+                    child["sum_logprobs"] = float(child["sum_logprobs"]) + float(cont["sum_logprobs"])
+                if child.get("num_tokens") is not None and cont.get("num_tokens") is not None:
+                    child["num_tokens"] = int(child["num_tokens"]) + int(cont["num_tokens"])
+            return child
+
+        def _set_reward_summary(node: Node) -> None:
+            child_rewards = []
+            for ch in node.get("children", []) or []:
+                r = ch.get("reward")
+                if r is None or (isinstance(r, float) and math.isnan(r)):
+                    continue
+                child_rewards.append(r)
+            if child_rewards:
+                node["reward"] = float(sum(child_rewards) / len(child_rewards))
+                node["reward_std"] = float((sum((x - (sum(child_rewards) / len(child_rewards))) ** 2 for x in child_rewards) / len(child_rewards)) ** 0.5)
+            else:
+                node["reward"] = 0.0
+                node["reward_std"] = 0.0
+
+        frontier: List[Node] = [tree]
+        for depth in range(max_depth):
+            expandable = [node for node in frontier if not node.get("leaf", False)]
+            if not expandable:
+                break
+
+            try:
+                base_branch_factor = int(self.node_expander.branch_factor_strategy({"depth": depth}))
+            except Exception:
+                base_branch_factor = 1
+            total_depth_budget = base_branch_factor * len(expandable)
+            branch_factor_by_depth[depth] = base_branch_factor
+
+            t_var = time.time()
+            estimate_tasks = [
+                asyncio.create_task(tv_estimator.estimate_for_parent(node, depth=depth))
+                for node in expandable
+            ]
+            estimate_results = await asyncio.gather(*estimate_tasks)
+            variance_seconds_by_depth[depth] = time.time() - t_var
+
+            for node, result in zip(expandable, estimate_results):
+                node["ingpo_reward_variance"] = result.reward_variance
+                node["ingpo_sigma2"] = result.reward_variance
+                node["ingpo_sigma4"] = result.reward_variance * result.reward_variance
+                node["ingpo_tv_pair_count"] = len(result.pair_tvs)
+                node["ingpo_tv_support_size"] = len(result.samples)
+                unique_candidates: List[Node] = []
+                seen_candidate_prefixes = set()
+                for sample in result.samples:
+                    prefix_text = sample.first.get("full_text", "")
+                    if prefix_text in seen_candidate_prefixes:
+                        continue
+                    seen_candidate_prefixes.add(prefix_text)
+                    unique_candidates.append(sample.first)
+                node["ingpo_budget_candidates"] = unique_candidates
+                # Keep the cached matrix available for debugging without recomputing P(ss_k2 | ss_i1).
+                node["ingpo_tv_logp_matrix"] = result.logp_matrix
+
+            t_alloc = time.time()
+            if self.ingpo_budget_overhead_mode == "flexible":
+                scheduler = FlexibleBudgetScheduler(
+                    queue_count=self.ingpo_budget_queue_count,
+                    lambda_=self.ingpo_budget_lambda,
+                )
+                summaries = scheduler.allocate(expandable, total_depth_budget=total_depth_budget)
+                allocations: Dict[str, int] = {}
+                weights: Dict[str, float] = {}
+                allocated_total = 0
+                underallocated_total = 0
+                for summary in summaries:
+                    allocations.update(summary.allocations)
+                    weights.update(summary.weights)
+                    allocated_total += summary.allocated_budget
+                    underallocated_total += summary.underallocated_budget
+            else:
+                summary = allocate_branch_factors(
+                    expandable,
+                    total_budget=total_depth_budget,
+                    lambda_=self.ingpo_budget_lambda,
+                )
+                allocations = summary.allocations
+                weights = summary.weights
+                allocated_total = summary.allocated_budget
+                underallocated_total = summary.underallocated_budget
+            allocation_seconds_by_depth[depth] = time.time() - t_alloc
+            allocated_by_depth[depth] = allocated_total
+            underallocated_by_depth[depth] = underallocated_total
+
+            t_expand = time.time()
+            next_frontier: List[Node] = []
+            for node in expandable:
+                node_id = str(node.get("ingpo_segment_id", "root"))
+                allocated = int(allocations.get(node_id, 0))
+                node["ingpo_allocated_branch_factor"] = allocated
+                node["ingpo_budget_weight"] = float(weights.get(node_id, 0.0))
+                candidates = sorted(
+                    node.get("ingpo_budget_candidates", []),
+                    key=lambda cand: float(cand.get("sum_logprobs", 0.0) or 0.0),
+                    reverse=True,
+                )
+                selected = candidates[:allocated]
+                completion_tasks = [
+                    asyncio.create_task(_complete_candidate(node, cand, depth, idx))
+                    for idx, cand in enumerate(selected)
+                ]
+                children = await asyncio.gather(*completion_tasks) if completion_tasks else []
+                node["children"] = children
+                node["ingpo_discarded_budget_candidates"] = max(
+                    len(node.get("ingpo_budget_candidates", [])) - len(selected),
+                    0,
+                )
+                next_frontier.extend([child for child in children if not child.get("leaf", False)])
+                _set_reward_summary(node)
+            expansion_seconds_by_depth[depth] = time.time() - t_expand
+            frontier = next_frontier
+
+        tree["ingpo_max_depth"] = int(max_depth)
+        tree["ingpo_branch_factor_by_depth"] = dict(branch_factor_by_depth)
+        tree["ingpo_allocated_branch_factor_by_depth"] = dict(allocated_by_depth)
+        tree["ingpo_underallocated_rollouts_by_depth"] = dict(underallocated_by_depth)
+        tree["ingpo_variance_seconds_by_depth"] = dict(variance_seconds_by_depth)
+        tree["ingpo_allocation_seconds_by_depth"] = dict(allocation_seconds_by_depth)
+        tree["ingpo_expansion_seconds_by_depth"] = dict(expansion_seconds_by_depth)
+        tree["ingpo_budget_overhead_mode"] = self.ingpo_budget_overhead_mode
+        tree["ingpo_answer_set_size"] = 0
+        tree["ingpo_tree_construction_seconds"] = time.time() - t0_tree
+        tree["ingpo_problem_id"] = problem_id
+        tree["ingpo_stats"] = {
+            "ingpo/allocated_rollouts": float(sum(allocated_by_depth.values())),
+            "ingpo/underallocated_rollouts": float(sum(underallocated_by_depth.values())),
+            "ingpo/variance_estimation_seconds": float(sum(variance_seconds_by_depth.values())),
+            "ingpo/budget_allocation_seconds": float(sum(allocation_seconds_by_depth.values())),
+            "ingpo/expansion_seconds": float(sum(expansion_seconds_by_depth.values())),
+        }
         return tree
 
     @staticmethod

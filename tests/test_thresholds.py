@@ -34,6 +34,15 @@ def test_tau_no_dkw():
     assert compute_tau(cfg, 0.02) == 0.02
 
 
-def test_tv_to_value_bound_scales_by_discount():
+def test_tv_to_value_bound_uses_epsilon_t_formula():
     cfg = ThresholdConfig(r_max=2.0, gamma=0.5)
-    assert tv_to_value_bound(0.1, cfg) == pytest.approx(0.4)
+    tv = 0.1
+    expected = (1.0 / (1.0 - cfg.gamma)) - (
+        1.0 / (1.0 - cfg.gamma * (1.0 - tv))
+    )
+    assert tv_to_value_bound(tv, cfg) == pytest.approx(expected)
+
+
+def test_tv_to_value_bound_is_zero_for_matching_distributions():
+    cfg = ThresholdConfig(gamma=0.5)
+    assert tv_to_value_bound(0.0, cfg) == pytest.approx(0.0)

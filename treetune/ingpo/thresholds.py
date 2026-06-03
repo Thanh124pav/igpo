@@ -42,6 +42,16 @@ def compute_tau(cfg: ThresholdConfig, eta: float) -> float:
 
 
 def tv_to_value_bound(tv: float, cfg: ThresholdConfig) -> float:
+    """Convert total variation to the |V_x - V_y| bound.
+
+    The theoretical formula is:
+
+        1 / (1 - gamma) - 1 / (1 - gamma * (1 - epsilon_T / 2))
+
+    where epsilon_T / 2 is the total variation distance TV(x, y).  The
+    ``tv`` argument is therefore substituted directly for epsilon_T / 2.
+    """
+
     gamma = min(max(float(cfg.gamma), 0.0), 1.0 - 1e-8)
-    scale = gamma / ((1.0 - gamma) ** 2)
-    return max(float(cfg.r_max), 0.0) * scale * float(tv)
+    tv = max(float(tv), 0.0)
+    return (1.0 / (1.0 - gamma)) - (1.0 / (1.0 - gamma * (1.0 - tv)))

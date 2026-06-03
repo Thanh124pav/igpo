@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 from datetime import timedelta
@@ -11,6 +12,7 @@ from treetune.common import (
     gpu_utils,
     py_utils,
 )
+from treetune.common.tensorboard_logger import CompositeLogger, TensorBoardLogger
 from treetune import logging_utils
 from treetune.common.py_utils import (
     is_world_process_zero,
@@ -59,11 +61,7 @@ class BaseRuntime(Runtime):
             logger.info(">>>>>>>>>>>>>>>>> DEBUG MODE <<<<<<<<<<<<<<<<<<<")
 
         if is_world_process_zero():
-            cloud_logger = self._create_cloud_logger()
-            if cloud_logger is not None:
-                from wandb.sdk.wandb_run import Run
-
-                self.cloud_logger: Run = self._create_cloud_logger()
+            self.cloud_logger = self._create_cloud_logger()
         else:
             self.cloud_logger = None
 
@@ -92,7 +90,7 @@ class BaseRuntime(Runtime):
                     f.write(f"{k}={v}\n")
                     logger.info(f"Application ENV: {k}={v}")
 
-        if not can_upload_files_to_cloud():
+        if self.cloud_logger is None or not can_upload_files_to_cloud():
             return
 
         if conf_path.exists():
@@ -100,13 +98,77 @@ class BaseRuntime(Runtime):
         self.cloud_logger.save(str(dotenv_path.absolute()), policy="now")
 
     def _create_cloud_logger(self):
-        try:
-            import wandb
-        except ImportError:
+        backend = self._get_log_backend()
+        if backend in {"none", "off", "disabled"}:
+            logger.info("Experiment logger disabled via APP_LOG_BACKEND=%s", backend)
+            return None
+
+        loggers = []
+        if backend in {"wandb", "both"}:
+            wandb_logger = self._create_wandb_logger()
+            if wandb_logger is not None:
+                loggers.append(wandb_logger)
+        if backend in {"tensorboard", "tb", "both"}:
+            tensorboard_logger = self._create_tensorboard_logger()
+            if tensorboard_logger is not None:
+                loggers.append(tensorboard_logger)
+
+        if not loggers:
+            logger.warning("No experiment logger was created for backend '%s'.", backend)
+            return None
+        if len(loggers) == 1:
+            return loggers[0]
+        return CompositeLogger(loggers)
+
+    def _get_log_backend(self) -> str:
+        backend = (
+            os.environ.get("APP_LOG_BACKEND")
+            or os.environ.get("LOG_BACKEND")
+            or self.global_vars.get("log_backend", "tensorboard")
+        )
+        backend = str(backend).strip().lower()
+        supported_backends = {
+            "wandb",
+            "tensorboard",
+            "tb",
+            "both",
+            "none",
+            "off",
+            "disabled",
+        }
+        if backend not in supported_backends:
+            logger.warning(
+                "Unknown APP_LOG_BACKEND='%s'; falling back to tensorboard. "
+                "Supported values are wandb, tensorboard, both, none.",
+                backend,
+            )
+            return "tensorboard"
+        return backend
+
+    def _create_tensorboard_logger(self):
+        if importlib.util.find_spec("tensorboard") is None:
+            logger.warning(
+                "TensorBoard is not installed. Please install it using `pip install tensorboard`"
+            )
+            return None
+
+        tensorboard_dir = (
+            os.environ.get("APP_TENSORBOARD_DIR")
+            or os.environ.get("TENSORBOARD_DIR")
+            or self.global_vars.get("tensorboard_dir")
+            or str(self.exp_root / "tensorboard")
+        )
+        logger.info("TensorBoard log dir set to %s", tensorboard_dir)
+        return TensorBoardLogger(tensorboard_dir)
+
+    def _create_wandb_logger(self):
+        if importlib.util.find_spec("wandb") is None:
             logger.warning(
                 "Wandb is not installed. Please install it using `pip install wandb`"
             )
             return None
+
+        import wandb
 
         if wandb.run is None:
             if self.debug_mode:
@@ -134,7 +196,7 @@ class BaseRuntime(Runtime):
                 mode=mode,
                 force=True,
                 entity=wandb_entity,
-                dir=wandb_dir
+                dir=wandb_dir,
             )
 
         return wandb.run
@@ -205,12 +267,7 @@ class DistributedRuntime(BaseRuntime):
             logger.info(">>>>>>>>>>>>>>>>> DEBUG MODE <<<<<<<<<<<<<<<<<<<")
 
         if self.distributed_state.is_main_process:
-            cloud_logger = self._create_cloud_logger()
-            if cloud_logger is not None:
-                from wandb.sdk.wandb_run import Run
-
-                self.cloud_logger: Run = self._create_cloud_logger()
-
+            self.cloud_logger = self._create_cloud_logger()
             self._write_meta_data()
         else:
             self.cloud_logger = None

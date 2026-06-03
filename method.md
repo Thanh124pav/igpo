@@ -69,7 +69,14 @@ TV distance được chuyển thành upper bound trên value error bằng:
 
 ```text
 value_bound(v_j, s)
-    = R_max * gamma / (1 - gamma)^2 * D(P_{v_j}, P_s)
+    = 1 / (1 - gamma)
+      - 1 / (1 - gamma * (1 - epsilon_T / 2))
+```
+
+Trong đó:
+
+```text
+epsilon_T / 2 = TV(v_j, s) = D(P_{v_j}, P_s)
 ```
 
 Nếu bật confidence correction, code dùng:
@@ -83,7 +90,14 @@ và:
 
 ```text
 value_bound(v_j, s)
-    = R_max * gamma / (1 - gamma)^2 * D_corrected(P_{v_j}, P_s)
+    = 1 / (1 - gamma)
+      - 1 / (1 - gamma * (1 - epsilon_T_corrected / 2))
+```
+
+Trong đó:
+
+```text
+epsilon_T_corrected / 2 = TV_corrected(v_j, s) = D_corrected(P_{v_j}, P_s)
 ```
 
 Điều kiện để share value là:
@@ -96,8 +110,9 @@ Tương đương:
 
 ```text
 min_{s in E(u)}
-    gamma / (1 - gamma)^2 * D(P_{v_j}, P_s)
-    <= epsilon / R_max
+    1 / (1 - gamma)
+    - 1 / (1 - gamma * (1 - D(P_{v_j}, P_s)))
+    <= epsilon
 ```
 
 Nếu điều kiện này đúng, InGPO gán action của `v_j` là `share` và dùng lại value của sibling gần nhất:
@@ -287,3 +302,70 @@ Nếu một node depth `1` bị `prune` và một node depth `1` khác bị `sha
 ```text
 total_prune_rate = (5 + 4) / 20 = 45%
 ```
+
+## Simulation-Lemma Budget Allocation Mode
+
+Ngoài legacy InGPO SHARE/PRUNE, code có thêm mode `budget_allocation`. Trong mode này, TV không dùng để quyết định share hoặc prune. TV chỉ dùng để ước lượng reward variance tại node parent `P`, rồi phân bổ số branch factor thực sự cho các node trong cùng budget group.
+
+Tree config mới mô tả cumulative node counts theo depth. Ví dụ legacy tree `6-6-6` tương đương:
+
+```text
+tree_shape = [6, 36, 216]
+```
+
+Config cũ dạng `{ depth, branch_factor }` vẫn chạy được và sẽ log warning rằng đây là legacy format.
+
+### Conditional TV Matrix
+
+Với mỗi node `P`, budget allocation sinh các sample hai pha:
+
+```text
+P -> ss_i1
+ss_i1 -> ss_i2
+```
+
+Sau đó code dựng và cache một ma trận conditional log-probability:
+
+```text
+L[i, k] = log Pr(ss_k2 | ss_i1)
+```
+
+Ma trận này được score đúng một lần cho mỗi cặp `(ss_i1, ss_k2)`. TV giữa hai sample được tính từ hai row đã normalize của ma trận, thay vì score lại từng pair:
+
+```text
+TV(ss_i, ss_j) = sum_k | Pr(ss_k2 | ss_i1) - Pr(ss_k2 | ss_j1) |
+```
+
+### Reward Variance
+
+Sau khi có pairwise TV, variance tại node `P` là:
+
+```text
+Var(P)
+    = 1 / (2 * n * (n - 1))
+      * sum_{i, j}
+        (
+          gamma * TV(ss_i, ss_j)
+          / ((1 - gamma) * (1 - gamma + TV(ss_i, ss_j)))
+        )^2
+```
+
+Trong code, `sigma_i^2 = Var(P_i)` và `sigma_i^4 = Var(P_i)^2`.
+
+### Branch Budget Allocation
+
+Với depth budget `B`, số branch factor thực sự cho node `P_i` là:
+
+```text
+B(P_i)
+    = floor(
+        B * fourth_root(sigma_i^4 + lambda)
+        / sum_j fourth_root(sigma_j^4 + lambda)
+      )
+```
+
+`lambda` mặc định là `0.02`. Phần dư do `floor()` không được redistribute; under-allocation được coi như một cách giảm rollout.
+
+### Flexible Overhead Mode
+
+`budget_overhead_mode = "flexible"` là default cho budget allocation. Các node đã tính xong variance được đưa vào các budget queue, queue nhận proportional budget và allocate ngay trong group đó thay vì chờ toàn bộ depth. Mode `"none"` vẫn có để ablation/fallback.

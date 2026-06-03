@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Train GRPO on MATH.  Default model: rho1bSft2.
-# Override base with MODEL={qwen1b,rho1bSft2,deepseekSft2,qwen1_5b_base}.
+# Override base with MODEL={deepseekR1Qwen,rho1bSft2,deepseekSft2,qwen1_5b_base}.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
