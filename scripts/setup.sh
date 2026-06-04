@@ -11,7 +11,7 @@ INGPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "[setup] Installing Python dependencies"
 pip install -r "${INGPO_ROOT}/requirements.txt"
-pip install sortedcontainers httpx 'openai>=1.0' wandb
+pip install sortedcontainers httpx 'openai>=1.0' wandb tensorboard
 
 echo "[setup] Preparing datasets"
 pushd "${INGPO_ROOT}" > /dev/null

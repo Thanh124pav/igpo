@@ -15,6 +15,7 @@ Một codebase thống nhất để huấn luyện LLM trên các tác vụ suy 
 | **SPO-chain** — Segment PO trên chain | `ppo` | `math_episode_generator` | `cot` | `train_spo_chain_MATH.sh` |
 | **SPO-tree** — Segment PO trên cây branching | `ppo` | `hybrid_episode_generator` | `hybrid` | `train_spo_tree_MATH.sh` |
 | **InGPO** — Information-Gated PO (SPO + ValueShare + Prune) | `ppo` | `ingpo_episode_generator` | `ingpo` | `train_ingpo_tree_MATH.sh` |
+| **BudgetAlloc-tree** — Simulation-lemma branch allocation | `ppo` | `ingpo_episode_generator` | `ingpo` (`algorithm_mode=budget_allocation`) | `train_budget_alloc_tree_MATH.sh` |
 
 Mỗi thuật toán có file canonical ở `configs/algorithms/<algo>.libsonnet` — thin overlay set `(trainer, episode_generator, inference_strategy)` types. Người dùng compose với model/task base để tạo full experiment config.
 
@@ -53,7 +54,9 @@ ingpo/
 bash scripts/setup.sh
 ```
 
-### Khởi động vLLM server (cần cho scoring)
+### vLLM server
+
+Các script train dùng `ingpo_run` và episode generator sẽ đi qua cấu hình vLLM của experiment. Chỉ cần tự chạy server ngoài khi bạn muốn debug/scoring thủ công hoặc dùng một endpoint có sẵn; khi đó set thêm:
 
 ```bash
 bash scripts/start_vllm_server.sh /path/to/model 8000 42 32 0
@@ -67,7 +70,7 @@ export APP_OPENAI_VLLM_API_BASE=http://127.0.0.1:8000/v1
 bash scripts/train_ppo_MATH.sh
 
 # GRPO với model khác
-MODEL=qwen1b bash scripts/train_grpo_MATH.sh
+MODEL=deepseekR1Qwen bash scripts/train_grpo_MATH.sh
 
 # DPO
 bash scripts/train_dpo_MATH.sh
@@ -80,13 +83,20 @@ TREE=6666 bash scripts/train_spo_tree_MATH.sh
 
 # InGPO-tree (mặc định 666)
 INGPO_TREE=666 bash scripts/train_ingpo_tree_MATH.sh
+
+# Budget allocation tree (simulation lemma) trên MATH
+TREE=666 MODEL=rho1bSft2 bash scripts/train_budget_alloc_tree_MATH.sh
+
+# So sánh matched: SPO-tree vs GRPO vs VinePPO vs Budget Allocation
+TREE=666 MODEL=rho1bSft2 NUM_ITER=10 bash scripts/run_exp_budget_compare_MATH.sh
+TREE=666 MODEL=rho1bSft2 NUM_ITER=10 bash scripts/run_exp_budget_compare_GSM8K.sh
 ```
 
 ### Đánh giá
 
 ```bash
-bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
-    experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010
+bash scripts/evaluate.sh polIter_deepseekR1Qwen_ingpo_tree_MATH \
+    experiments/ingpo-tree-666-deepseek-r1-qwen-math/iteration_0010
 ```
 
 ## Compose configs
@@ -135,7 +145,22 @@ Ablations & sweep nằm trong `configs/ablations/`, `configs/baselines/`, `confi
 
 ## Logging offline (no internet)
 
-InGPO ghi mọi metric ra file để dùng offline:
+TensorBoard là backend logging mặc định, nên server bị chặn W&B vẫn chạy được mà không cần login W&B. Nếu muốn gom log vào một thư mục cố định để mở TensorBoard, chỉ cần set:
+
+```bash
+export APP_TENSORBOARD_DIR=/workspace/igpo/tensorboard_runs
+TREE=666 MODEL=rho1bSft2 NUM_ITER=10 bash scripts/run_exp_budget_compare_MATH.sh
+```
+
+Sau khi chạy, mở TensorBoard trên cùng server:
+
+```bash
+tensorboard --logdir /workspace/igpo/tensorboard_runs --host 0.0.0.0 --port 6006
+```
+
+Nếu không set `APP_TENSORBOARD_DIR`, log TensorBoard mặc định nằm trong `<exp>/tensorboard`. Các backend hợp lệ: `APP_LOG_BACKEND=tensorboard` (mặc định), `wandb`, `both`, hoặc `none`.
+
+InGPO vẫn ghi mọi metric quan trọng ra file để dùng offline:
 
 - `<exp>/training_timing.jsonl` — mỗi iteration 1 dòng: `train_total_seconds` (không gồm eval), `eval_seconds`, cumulative wall.
 - `<exp>/ingpo_demos/demos.jsonl` — mỗi tree: stats, per_depth, tree_construction_seconds, SHARE/PRUNE demos.
@@ -154,6 +179,8 @@ python scripts/inspect_demos.py <exp>/ingpo_demos/demos.jsonl --summary
 ```bash
 PYTHONPATH=. python -m pytest tests/ -q       # unit tests (no GPU needed)
 bash scripts/run_smoke.sh                     # config compile + unit tests
+bash scripts/run_budget_alloc_small_model_smoke.sh  # compile budget-allocation smoke for GPT2/Qwen2-0.5B/Qwen3-0.6B
+RUN_E2E=1 bash scripts/run_budget_alloc_small_model_smoke.sh  # optional tiny E2E runs (needs vLLM/GPU)
 bash scripts/train_debug.sh                   # E2E 2 iterations, depth 2 (needs vLLM)
 ```
 

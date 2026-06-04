@@ -30,6 +30,20 @@
     // Tail-fill concurrency to vLLM /completions
     score_concurrency: 64,
 
+    // Algorithm mode. The default preserves the legacy InGPO SHARE/PRUNE
+    // behavior; set to 'budget_allocation' to use simulation-lemma variance
+    // allocation. In budget-allocation mode, TV is not used for SHARE/PRUNE.
+    algorithm_mode: 'share_prune',
+    tv_estimator: 'subnode',
+    n_tv_estimates: 8,
+    tv_subnode_max_tokens: 120,
+    tv_second_phase_tokens: 60,
+    tv_includes_half_factor: false,
+    budget_lambda: 0.02,
+    budget_overhead_mode: 'flexible',
+    budget_queue_count: 2,
+    budget_queue_timeout_seconds: 0.5,
+
     // Edge handling
     zero_advantage_when_pruned: false,
     emit_pruned_edges: true,

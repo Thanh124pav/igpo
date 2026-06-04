@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Train PPO on MATH.  Default model: Qwen2.5-1.5B (rho1bSft2 base).
-# Override base with MODEL={qwen1b,rho1bSft2,deepseekSft2,qwen1_5b_base}.
+# Override base with MODEL={deepseekR1Qwen,rho1bSft2,deepseekSft2,qwen1_5b_base}.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 

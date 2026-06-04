@@ -3,7 +3,7 @@ local num_episodes_per_iteration = 1024;
 local num_dataset_samples_per_iteration = 16;
 
 
-(import 'polIter_qwen1b_spo_chain_point24.jsonnet')
+(import 'polIter_deepseekR1Qwen_spo_chain_point24.jsonnet')
 + {
   episode_generator+: {
     type: 'hybrid_episode_generator',
