@@ -3,7 +3,7 @@ local num_episodes_per_iteration = 1024;
 local num_dataset_samples_per_iteration = 16;
 local total_num_iterations = 1000;
 
-(import 'polIter_deepseekSft2_vineppo_MATH.jsonnet')
+(import 'polIter_deepseekSft2_ppo_MATH.jsonnet')
 + {
   episode_generator+: {
     type: 'hybrid_episode_generator',

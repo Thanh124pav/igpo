@@ -1,16 +1,21 @@
-"""BST-like index over segments keyed by AvgLP_K.
+"""BST over segments keyed by AvgLP_K, supporting O(log N) FindNearest.
 
 PLAN.md line 33: `Insert(BST, key=AvgLP_K, value=s)`. `FindNearest` returns the
-segment with the closest key to a query AvgLP_K value.  The implementation uses
-Python's built-in ``bisect`` module so tests and lightweight environments do not
-need the optional ``sortedcontainers`` package.
+segment with the closest key to a query AvgLP_K value.
 """
 
 from __future__ import annotations
 
-import bisect
 import threading
-from typing import List, Optional, Tuple
+from typing import Any, Optional, Tuple
+
+try:
+    from sortedcontainers import SortedList  # type: ignore
+except ImportError as exc:  # pragma: no cover
+    raise ImportError(
+        "sortedcontainers is required for InGPO segment index. "
+        "Install with `pip install sortedcontainers`."
+    ) from exc
 
 
 class SegmentBST:
@@ -21,12 +26,12 @@ class SegmentBST:
     """
 
     def __init__(self):
-        self._items: List[Tuple[float, str]] = []
+        self._items: SortedList = SortedList(key=lambda kv: kv[0])
         self._lock = threading.Lock()
 
     def insert(self, key: float, segment_id: str) -> None:
         with self._lock:
-            bisect.insort(self._items, (float(key), segment_id))
+            self._items.add((float(key), segment_id))
 
     def find_nearest(self, key: float) -> Optional[Tuple[float, str]]:
         """Return (key, segment_id) of the entry closest to `key`, or None if empty."""
@@ -35,7 +40,7 @@ class SegmentBST:
             if len(self._items) == 0:
                 return None
             target = (float(key), "")
-            idx = bisect.bisect_left(self._items, target)
+            idx = self._items.bisect_left(target)
             candidates = []
             if idx < len(self._items):
                 candidates.append(self._items[idx])

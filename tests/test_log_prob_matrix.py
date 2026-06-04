@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import pytest
 
 from treetune.ingpo.log_prob_matrix import LogProbMatrix
@@ -9,12 +10,12 @@ def test_add_and_full_fill():
     M = LogProbMatrix(K=3, m=5)
     fast = [-1.0, -2.0, -3.0]
     row = M.add_row("s0", fast, prefix="prefix")
-    assert row.avg_lp_K == pytest.approx(sum(fast) / len(fast))
+    assert row.avg_lp_K == pytest.approx(np.mean(fast))
 
     M.fill_full("s0", [-4.0, -5.0])
     row = M.get("s0")
     assert row.full is not None
-    assert row.avg_lp_m == pytest.approx(sum([-1, -2, -3, -4, -5]) / 5)
+    assert row.avg_lp_m == pytest.approx(np.mean([-1, -2, -3, -4, -5]))
 
 
 def test_delta_residual():

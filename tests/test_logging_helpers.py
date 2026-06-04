@@ -91,12 +91,12 @@ def test_per_depth_action_counts():
     assert out["ingpo/depth_1/n"] == 2
     assert out["ingpo/depth_1/share_count"] == 1
     assert out["ingpo/depth_1/expand_count"] == 1
+    assert out["ingpo/depth_1/share_rate"] == 0.5
 
     # depth 2: 1 expand + 1 prune
     assert out["ingpo/depth_2/n"] == 2
     assert out["ingpo/depth_2/prune_count"] == 1
-    assert "ingpo/depth_2/prune_rate" not in out
-    assert "ingpo/depth_1/share_rate" not in out
+    assert out["ingpo/depth_2/prune_rate"] == 0.5
 
 
 def test_collect_demo_rows_picks_share_and_prune():
@@ -169,21 +169,14 @@ def test_render_md_section_share_and_prune():
     md = render_md_section(
         tree_idx=3,
         question_id="q-7",
-        stats={
-            "ingpo/prune_rate": 0.5,
-            "ingpo/share_prune_rate": 0.25,
-            "ingpo/total_prune_rate": 0.75,
-            "ingpo/shared_count": 1,
-            "ingpo/pruned_count": 1,
-            "ingpo/expanded_count": 2,
-        },
+        stats={"ingpo/share_rate": 0.5, "ingpo/prune_rate": 0.5,
+               "ingpo/shared_count": 1, "ingpo/pruned_count": 1,
+               "ingpo/expanded_count": 2},
         demo_rows=rows,
     )
     assert "Tree #3" in md
-    assert "share_rate" not in md
+    assert "share_rate: **0.500**" in md
     assert "prune_rate: **0.500**" in md
-    assert "share_prune_rate: **0.250**" in md
-    assert "total_prune_rate: **0.750**" in md
     assert "### SHARE demos" in md
     assert "### PRUNE demos" in md
     # Per-row content is included.
@@ -217,8 +210,8 @@ def test_to_jsonl_record_roundtrip():
         tree_idx=11,
         question_id="q-7",
         answer_set_size=42,
-        stats={"ingpo/total_prune_rate": 0.5},
-        per_depth={"ingpo/depth_1/share_count": 1},
+        stats={"ingpo/share_rate": 0.5},
+        per_depth={"ingpo/depth_1/share_rate": 0.5},
         demo_rows=rows,
     )
     # Must be JSON-serialisable.

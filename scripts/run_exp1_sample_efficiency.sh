@@ -17,9 +17,9 @@ TAG="${EXP1_TAG:-exp1}"
 run_one() {
   local model="$1" tree="$2"
   if [[ "${model}" == "qwen" ]]; then
-    INGPO_TREE="${tree}" APP_EXPERIMENT_NAME="${TAG}-spo-tree-${tree}-qwen2.5-1.5b-math" \
+    INGPO_TREE="${tree}" APP_EXPERIMENT_NAME="${TAG}-spo-tree-${tree}-qwen1.5b-math" \
       bash "${INGPO_ROOT}/scripts/run_baseline.sh" spo_tree_MATH
-    INGPO_TREE="${tree}" APP_EXPERIMENT_NAME="${TAG}-ingpo-tree-${tree}-qwen2.5-1.5b-math" \
+    INGPO_TREE="${tree}" APP_EXPERIMENT_NAME="${TAG}-ingpo-tree-${tree}-qwen1.5b-math" \
       bash "${INGPO_ROOT}/scripts/train_ingpo_tree_MATH.sh"
   else
     INGPO_TREE="${tree}" APP_EXPERIMENT_NAME="${TAG}-spo-tree-${tree}-rho1.1b-gsm8k" \

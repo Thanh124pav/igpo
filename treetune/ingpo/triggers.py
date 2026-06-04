@@ -10,7 +10,7 @@ The decision flow follows PLAN Algorithm 3:
 
   1. Score K fast indices for the new segment s.
   2. FindNearest in the BST. If close enough, fill full m and check TV_m.
-     If the epsilon_T formula with epsilon_T / 2 = TV_m is <= epsilon -> SHARE.
+     If TV_m <= eta -> SHARE with that segment.
   3. Else compare AvgLP_K(s) with AvgLP_K(pa). If much lower, fill full and
      check AvgLP_m gap. If still lower by eta -> PRUNE.
   4. Else INSERT into BST and let the caller expand children.
@@ -33,7 +33,7 @@ from treetune.ingpo.answer_set import AnswerSet
 from treetune.ingpo.log_prob_matrix import LogProbMatrix, SegmentLP
 from treetune.ingpo.lp_scorer import LPScorer
 from treetune.ingpo.segment_index import SegmentBST
-from treetune.ingpo.thresholds import ThresholdConfig, compute_eta, compute_tau, tv_to_value_bound
+from treetune.ingpo.thresholds import ThresholdConfig, compute_eta, compute_tau
 from treetune.ingpo.tv_distance import (
     avg_lp_diff_K,
     conditional_ig_lower_bound,
@@ -82,11 +82,13 @@ class TriggerStats:
 
     def as_dict(self) -> Dict[str, float]:
         total = self.expanded + self.shared + self.pruned
+        share_rate = self.shared / max(total, 1)
         prune_rate = self.pruned / max(total, 1)
         return {
             "ingpo/expanded_count": self.expanded,
             "ingpo/shared_count": self.shared,
             "ingpo/pruned_count": self.pruned,
+            "ingpo/share_rate": share_rate,
             "ingpo/prune_rate": prune_rate,
             "ingpo/avg_tv_when_share": self.avg_tv_share,
             "ingpo/avg_gap_when_prune": self.avg_gap_prune,
@@ -163,7 +165,7 @@ class TriggerEngine:
                 if gap_K < tau:
                     await self._fill_full([row_s, row_t], prefixes=[prefix, None])
                     tv = tv_m(row_s, row_t)
-                    if tv_to_value_bound(tv, self.thresholds) <= self.thresholds.epsilon:
+                    if tv <= eta:
                         decision.action = Action.SHARE
                         decision.share_target = target_id
                         decision.tv_m = tv

@@ -34,3 +34,23 @@ def test_allocate_branch_factors_keeps_floor_underallocation():
     assert summary.allocated_budget <= 5
     assert summary.underallocated_budget == 5 - summary.allocated_budget
     assert summary.allocations["b"] >= summary.allocations["a"]
+
+
+def test_allocate_branch_factors_handles_zero_budget_and_fallback_ids():
+    nodes = [
+        {"ingpo_reward_variance": 0.1},
+        {"id": "explicit", "ingpo_reward_variance": 0.2},
+    ]
+
+    summary = allocate_branch_factors(nodes, total_budget=-3, lambda_=0.02)
+
+    assert summary.requested_budget == 0
+    assert summary.allocated_budget == 0
+    assert summary.underallocated_budget == 0
+    assert summary.allocations == {"node_0": 0, "explicit": 0}
+
+
+def test_reward_variance_and_gap_clamp_degenerate_inputs():
+    assert reward_variance_from_pair_tvs({}, n=1, gamma=0.5) == 0.0
+    assert simulation_lemma_gap(tv=-1.0, gamma=0.5) == 0.0
+    assert math.isfinite(simulation_lemma_gap(tv=0.2, gamma=1.0))

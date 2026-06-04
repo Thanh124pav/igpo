@@ -50,8 +50,8 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
 
     def __init__(
         self,
-        ingpo_zero_advantage_when_pruned: bool = False,
-        ingpo_emit_pruned_edges: bool = True,
+        ingpo_zero_advantage_when_pruned: bool = True,
+        ingpo_emit_pruned_edges: bool = False,
         ingpo_share_inherit: str = "value_and_reward",  # or "value_only"
         ingpo_demo_examples_per_tree: int = 2,  # how many SHARE / PRUNE demos to log per tree
         ingpo_demos_dir: Optional[str] = None,  # absolute path; else exp_root/ingpo_demos
@@ -264,9 +264,9 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         if self._ingpo_demos_dir_override:
             base = Path(self._ingpo_demos_dir_override)
         elif getattr(self, "exp_root", None) is not None:
-            base = Path(self.exp_root) / "demos" / "ingpo"
+            base = Path(self.exp_root) / "ingpo_demos"
         else:
-            base = Path.cwd() / "demos" / "ingpo"
+            base = Path.cwd() / "ingpo_demos"
 
         try:
             base.mkdir(parents=True, exist_ok=True)
@@ -288,7 +288,7 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
             if self._ingpo_md_handle.tell() == 0:
                 self._ingpo_md_handle.write(
                     "# InGPO SHARE / PRUNE demos\n\n"
-                    "One section per tree. Full sample text is preserved.\n\n"
+                    "One section per tree. `tail -F demos.md` to follow live.\n\n"
                 )
         return self._ingpo_jsonl_handle, self._ingpo_md_handle
 
@@ -329,10 +329,7 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         if not (demo_rows["share"] or demo_rows["prune"]):
             return
         try:
-            md_stats = dict(stats or {})
-            if tree_construction_seconds is not None:
-                md_stats["tree_construction_seconds"] = tree_construction_seconds
-            md.write(render_md_section(tree_idx, question_id, md_stats, demo_rows))
+            md.write(render_md_section(tree_idx, question_id, stats, demo_rows))
         except Exception as exc:
             logger.warning(f"InGPO: failed to append demos.md: {exc}")
 

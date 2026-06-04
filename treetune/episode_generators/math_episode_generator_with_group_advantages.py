@@ -16,7 +16,6 @@ from treetune.common import Lazy
 from treetune.common.vllm_server import VLLMServer
 from treetune.episode_generators import EpisodeGenerator, MathEpisodeGenerator
 from treetune.episode_generators.base_episode_generator import Episode
-from treetune.episode_generators.demo_logging import DemoFileLogger
 from treetune.inference_strategies import InferenceStrategy
 from treetune.logging_utils import get_logger
 
@@ -30,8 +29,6 @@ class MathEpisodeGeneratorWithGroupAdvantages(MathEpisodeGenerator):
         value_estimation_inference_strategy: Lazy[InferenceStrategy],
         max_step_for_value_estimation: Optional[int] = None,
         adv_method: Optional[Literal["grpo", "rloo"]] = "grpo",
-        grpo_demo_examples_per_iteration: int = 8,
-        grpo_demos_dir: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -39,12 +36,6 @@ class MathEpisodeGeneratorWithGroupAdvantages(MathEpisodeGenerator):
         self.max_step_for_value_estimation = max_step_for_value_estimation
         self.adv_method = adv_method
         self._logger = logger
-        self.grpo_demo_examples_per_iteration = int(grpo_demo_examples_per_iteration)
-        self._grpo_demo_logger = DemoFileLogger(
-            algorithm="grpo",
-            exp_root=self.exp_root,
-            demos_dir=grpo_demos_dir,
-        )
 
     def _run_inference(
         self,
@@ -219,22 +210,6 @@ class MathEpisodeGeneratorWithGroupAdvantages(MathEpisodeGenerator):
         # )
 
         self._compute_group_advantages(trajectories)
-        self._grpo_demo_logger.log_samples(
-            (
-                {
-                    "question_id": traj.get("instance_idx"),
-                    "score": traj.get("score"),
-                    "reward": traj.get("score"),
-                    "advantage": traj.get("advantage"),
-                    "tree_construction_seconds": traj.get("tree_construction_seconds"),
-                    "query_text": traj.get("query_text"),
-                    "response_text": traj.get("response_text"),
-                }
-                for traj in trajectories
-            ),
-            iteration=iteration,
-            limit=self.grpo_demo_examples_per_iteration,
-        )
 
         metrics = {
             # "num_reasoning_steps": [],
@@ -794,7 +769,6 @@ class MathEpisodeGeneratorWithGroupAdvantages(MathEpisodeGenerator):
                         "response_token_ids": response_token_ids,
                         "offsets": offsets,
                         "score": traj_score,
-                        "tree_construction_seconds": tree.get("tree_construction_seconds"),
                         "is_unfinished_response": is_unfinished_response,
                         # "steps": steps,
                         # "step_indices": indices,

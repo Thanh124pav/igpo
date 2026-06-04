@@ -5,7 +5,7 @@
 #   bash scripts/evaluate.sh <config_alias> <last_policy_path> [extra args...]
 #
 # Examples:
-#   bash scripts/evaluate.sh polIter_deepseekR1Qwen_ingpo_tree_MATH "${INGPO_ROOT}/experiments/exp1-ingpo-tree-666-deepseek-r1-qwen-math/iteration_0010"
+#   bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH "${INGPO_ROOT}/experiments/exp1-ingpo-tree-666-qwen1.5b-math/iteration_0010"
 #   bash scripts/evaluate.sh polIter_rho1bSft2_ingpo_tree_GSM8K  "<hf-checkpoint>"
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"

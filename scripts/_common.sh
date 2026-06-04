@@ -115,11 +115,20 @@ ensure_runtime_config() {
   if [[ -n "${INGPO_N_TV_ESTIMATES:-}" ]]; then
     ingpo_inference_overrides+="      ingpo_n_tv_estimates: ${INGPO_N_TV_ESTIMATES},"$'\n'
   fi
+  if [[ -n "${INGPO_TV_SUBNODE_MAX_TOKENS:-}" ]]; then
+    ingpo_inference_overrides+="      ingpo_tv_subnode_max_tokens: ${INGPO_TV_SUBNODE_MAX_TOKENS},"$'\n'
+  fi
+  if [[ -n "${INGPO_TV_SECOND_PHASE_TOKENS:-}" ]]; then
+    ingpo_inference_overrides+="      ingpo_tv_second_phase_tokens: ${INGPO_TV_SECOND_PHASE_TOKENS},"$'\n'
+  fi
   if [[ -n "${INGPO_BUDGET_OVERHEAD_MODE:-}" ]]; then
     ingpo_inference_overrides+="      ingpo_budget_overhead_mode: '${INGPO_BUDGET_OVERHEAD_MODE}',"$'\n'
   fi
   if [[ -n "${INGPO_BUDGET_LAMBDA:-}" ]]; then
     ingpo_inference_overrides+="      ingpo_budget_lambda: ${INGPO_BUDGET_LAMBDA},"$'\n'
+  fi
+  if [[ -n "${INGPO_BUDGET_QUEUE_COUNT:-}" ]]; then
+    ingpo_inference_overrides+="      ingpo_budget_queue_count: ${INGPO_BUDGET_QUEUE_COUNT},"$'\n'
   fi
 
   mkdir -p "${gen_dir}"
@@ -273,16 +282,12 @@ ensure_tree_config() {
     echo "      M: ${M},"
     echo "      max_depth: ${depth},"
     echo "      branch_factor_strategy+: {"
-    local cumulative=1
-    local tree_shape=""
+    echo "        branch_factors: ["
     local i
     for (( i=0; i<depth; i++ )); do
-      cumulative=$(( cumulative * ${shape:$i:1} ))
-      if [[ -n "${tree_shape}" ]]; then tree_shape+=", "; fi
-      tree_shape+="${cumulative}"
+      echo "          { depth: ${i}, branch_factor: ${shape:$i:1} },"
     done
-    echo "        // New format: cumulative node counts per depth."
-    echo "        tree_shape: [${tree_shape}],"
+    echo "        ],"
     echo "      },"
     echo "    },"
     echo "  },"
@@ -296,7 +301,7 @@ ensure_tree_config() {
 default_model_base_for_suffix() {
   local suffix="$1"
   case "${suffix}" in
-    ingpo_tree|budget_alloc_tree|spo_tree|spo_chain|grpo)
+    ingpo_tree|spo_tree|spo_chain|grpo)
       echo "qwen1_5b_base"
       ;;
     ppo|dpo_positive|restem)

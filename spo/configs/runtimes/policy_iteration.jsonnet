@@ -1,3 +1,0 @@
-{
-    type: 'policy_iteration',
-}

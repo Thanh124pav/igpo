@@ -36,7 +36,6 @@ regex==2023.12.25
 requests==2.31.0
 sentencepiece==0.2.0
 sortedcontainers
-tensorboard==2.16.2
 tokenizers==0.15.2
 torch==2.1.2
 torchaudio==2.1.2

@@ -174,12 +174,8 @@ class TreeEpisodeUtils:
             node.pop("children", None)
 
         tree_copy = copy.deepcopy(tree)
-        tree_construction_seconds = tree_copy.get("tree_construction_seconds")
         dfs(tree_copy)
         edges = json.loads(json.dumps(edges))
-        if tree_construction_seconds is not None:
-            for edge in edges:
-                edge["tree_construction_seconds"] = tree_construction_seconds
         return edges
 
 

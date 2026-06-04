@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from typing import Tuple
 
+import numpy as np
 
 from treetune.ingpo.log_prob_matrix import SegmentLP
 
@@ -37,9 +38,9 @@ def tv_m(row_a: SegmentLP, row_b: SegmentLP) -> float:
     if row_a.m != row_b.m:
         raise ValueError(f"Row m mismatch: {row_a.m} vs {row_b.m}")
 
-    pa = [math.exp(x) for x in row_a.full]
-    pb = [math.exp(x) for x in row_b.full]
-    body = 0.5 * sum(abs(a - b) for a, b in zip(pa, pb))
+    pa = np.exp(row_a.full)
+    pb = np.exp(row_b.full)
+    body = 0.5 * float(np.sum(np.abs(pa - pb)))
     tail = 0.5 * (math.exp(row_a.delta()) + math.exp(row_b.delta()))
     return body + tail
 

@@ -271,13 +271,24 @@ class EfficientIIDExpander(NodeExpander):
         num_expansion_rounds: int = 1,
         model_context_size: Optional[int] = None,
         tokenizer: Optional[Tokenizer] = None,
-        store_logprobs: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
-        self.store_logprobs = bool(store_logprobs)
-        program_kwargs["logprobs"] = 1 if self.store_logprobs else 0
+        # if "logprobs" not in program_kwargs:
+        #     program_kwargs["logprobs"] = 0
+        # else:
+        #     assert program_kwargs["logprobs"] in [0, 1], "logprobs must be 0 or 1"
+
+        # For simplicity, we just always set logprobs to 1
+        if "logprobs" not in program_kwargs:
+            program_kwargs["logprobs"] = 0
+        
+        program_kwargs["logprobs"] = 0
+
+        # else:
+        #     assert program_kwargs["logprobs"] == 1, "logprobs must be 1"
+
 
         if "num_samples" in program_kwargs:
             program_kwargs.pop("num_samples")
@@ -349,6 +360,10 @@ class EfficientIIDExpander(NodeExpander):
         variables = result.variables()
         generated_chain_of_thoughts = variables["chain_of_thought"]
         finish_reasons = variables["chain_of_thought_finish_reason"]
+        # logprobs =  variables["chain_of_thought_logprobs"]
+        # tokens = variables["chain_of_thought_tokens"]
+
+        # assert len(logprobs) == len(tokens)
 
         if branch_factor > 1:
             assert len(generated_chain_of_thoughts) == branch_factor
@@ -356,36 +371,29 @@ class EfficientIIDExpander(NodeExpander):
         else:
             generated_chain_of_thoughts = [generated_chain_of_thoughts]
             finish_reasons = [finish_reasons]
-
-        logprobs_per_node = None
-        if self.store_logprobs and "chain_of_thought_logprobs" in variables:
-            raw = variables["chain_of_thought_logprobs"]
-            logprobs_per_node = raw if branch_factor > 1 else [raw]
+            # logprobs = [logprobs]
+            # tokens = [tokens]
 
         nodes = []
-        for i, (chain_of_thought, finish_reason) in enumerate(
-            zip(generated_chain_of_thoughts, finish_reasons)
+        for chain_of_thought, finish_reason in zip(
+            generated_chain_of_thoughts, finish_reasons
         ):
             node_text = self.node_text_template.format(
                 chain_of_thought=chain_of_thought
             )
             full_text = program.replace("{{prefix}}", prefix)
             full_text = replace_gen_pattern(full_text, node_text)
+            # full_text = re.sub(r"\{\{gen(.|\s)*}}", node_text, full_text)
 
             node = {
-                "text": node_text,
+                "text": node_text, # model response
                 "depth": depth,
-                "full_text": full_text,
-                "stop_text": None,
-                "finish_reason": finish_reason,
+                "full_text": full_text, # prompt + model response
+                "stop_text": None, # not used
+                "finish_reason": finish_reason, # `length` means truncated
+                # "logprob": logprob,
+                # "tokens": token
             }
-
-            if logprobs_per_node is not None and i < len(logprobs_per_node):
-                lps = logprobs_per_node[i]
-                if isinstance(lps, list) and lps:
-                    node["sum_logprobs"] = float(sum(lps))
-                    node["num_tokens"] = len(lps)
-
             nodes.append(node)
 
         return nodes
@@ -581,20 +589,16 @@ class EfficientIIDExpanderForTree(EfficientIIDExpander):
             generated_chain_of_thoughts = [generated_chain_of_thoughts]
             finish_reasons = [finish_reasons]
 
-        logprobs_per_node = None
-        if self.store_logprobs and "chain_of_thought_logprobs" in variables:
-            raw = variables["chain_of_thought_logprobs"]
-            logprobs_per_node = raw if branch_factor > 1 else [raw]
-
         nodes = []
-        for i, (chain_of_thought, finish_reason) in enumerate(
-            zip(generated_chain_of_thoughts, finish_reasons)
+        for chain_of_thought, finish_reason in zip(
+            generated_chain_of_thoughts, finish_reasons
         ):
             node_text = self.node_text_template.format(
                 chain_of_thought=chain_of_thought
             )
             full_text = program.replace("{{prefix}}", prefix)
             full_text = replace_gen_pattern(full_text, node_text)
+            # full_text = re.sub(r"\{\{gen(.|\s)*}}", node_text, full_text)
 
             node = {
                 "text": node_text,
@@ -607,13 +611,6 @@ class EfficientIIDExpanderForTree(EfficientIIDExpander):
                 ),
                 "finish_reason": finish_reason,
             }
-
-            if logprobs_per_node is not None and i < len(logprobs_per_node):
-                lps = logprobs_per_node[i]
-                if isinstance(lps, list) and lps:
-                    node["sum_logprobs"] = float(sum(lps))
-                    node["num_tokens"] = len(lps)
-
             nodes.append(node)
 
         return nodes

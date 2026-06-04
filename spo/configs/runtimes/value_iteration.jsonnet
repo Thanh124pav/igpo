@@ -1,3 +1,0 @@
-{
-    type: 'value_iteration',
-}

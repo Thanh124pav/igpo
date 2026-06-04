@@ -14,9 +14,10 @@
     use_dkw: true,
     eta_override: null,
 
-    // Triggers
-    enable_share: true,
-    enable_prune: true,
+    // Legacy SHARE/PRUNE triggers. The default path below uses TV only for
+    // simulation-lemma reward variance and budget allocation.
+    enable_share: false,
+    enable_prune: false,
     share_target: 'nearest',  // 'nearest' | 'parent' | 'root'
     local_value_share: true,
     share_pair_budget_fraction: 0.25,  // roughly (W/2)^2 sibling pairs
@@ -30,10 +31,10 @@
     // Tail-fill concurrency to vLLM /completions
     score_concurrency: 64,
 
-    // Algorithm mode. The default preserves the legacy InGPO SHARE/PRUNE
-    // behavior; set to 'budget_allocation' to use simulation-lemma variance
-    // allocation. In budget-allocation mode, TV is not used for SHARE/PRUNE.
-    algorithm_mode: 'share_prune',
+    // Budget-allocation mode: TV approximation estimates reward variance,
+    // then branch budget is allocated across frontier nodes. TV SHARE/PRUNE
+    // is not used in this mode.
+    algorithm_mode: 'budget_allocation',
     tv_estimator: 'subnode',
     n_tv_estimates: 8,
     tv_subnode_max_tokens: 120,
@@ -45,8 +46,8 @@
     budget_queue_timeout_seconds: 0.5,
 
     // Edge handling
-    zero_advantage_when_pruned: false,
-    emit_pruned_edges: true,
+    zero_advantage_when_pruned: true,
+    emit_pruned_edges: false,
 
     // Logging: how many SHARE / PRUNE demo rows to dump per tree.
     // Set 0 to skip demo files entirely (per-depth rates stay on).

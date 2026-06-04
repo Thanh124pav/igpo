@@ -419,12 +419,11 @@ class HybridInferenceStrategy(InferenceStrategy):
 
         await dfs(tree, initial_prompt, 0)
 
-        tree["tree_construction_seconds"] = time.time() - t0_tree
-
         # Remove the `_data_instance` field from the tree
         # as it is not needed anymore
         # tree.pop("_request_object", None)
 
+        tree["tree_construction_seconds"] = time.time() - t0_tree
         return tree
 
     def _convert_tree_to_string(self, tree: Node) -> str:

@@ -88,7 +88,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_y_max_tokens: int = 512,
         ingpo_y_field: str = "answer",  # field on data_instance with gold
         ingpo_score_concurrency: int = 64,
-        ingpo_algorithm_mode: str = "share_prune",
+        ingpo_algorithm_mode: str = "budget_allocation",
         ingpo_tv_estimator: str = "subnode",
         ingpo_n_tv_estimates: int = 8,
         ingpo_tv_subnode_max_tokens: int = 120,

@@ -1,5 +1,0 @@
-{
-    trainer+: {
-        type: "empty",
-    }
-}

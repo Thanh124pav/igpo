@@ -1,2 +1,2 @@
 // Baseline: GRPO on GSM8K with Rho-1.1B-SFT.
-(import '../../spo/configs/polIter_rho1bSft2_grpo_GSM8K.jsonnet')
+(import '../polIter_rho1bSft2_grpo_GSM8K.jsonnet')
