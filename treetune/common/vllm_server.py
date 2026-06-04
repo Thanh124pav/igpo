@@ -383,20 +383,51 @@ class VLLMServer(FromParams):
             logger.warning(f"Could not query GPU {gpu_idx} processes: {e}")
             return
 
-        to_kill = gpu_pids & owned_pids
-        for pid in to_kill:
-            try:
-                logger.info(f"Force-killing owned vLLM PID {pid} on GPU {gpu_idx}")
-                os.kill(pid, signal.SIGKILL)
-            except (psutil.NoSuchProcess, ProcessLookupError):
-                pass
-            except Exception as e:
-                logger.warning(f"Could not kill PID {pid}: {e}")
-
-        unowned = gpu_pids - owned_pids
-        if unowned:
+        vllm_processes = [
+            (pid, command)
+            for pid in pids
+            if (command := self._pid_command(pid)) and "vllm" in command.lower()
+        ]
+        vllm_pids = [pid for pid, _ in vllm_processes]
+        skipped_processes = [
+            (pid, command)
+            for pid in pids
+            if pid not in set(vllm_pids) and (command := self._pid_command(pid))
+        ]
+        if skipped_processes:
             logger.info(
-                f"Leaving non-owned process(es) on GPU {gpu_idx} alone: {sorted(unowned)}"
+                f"Skipping non-vLLM process(es) still on GPU {gpu_idx}: "
+                f"{[(pid, command[:80]) for pid, command in skipped_processes]}"
             )
 
-        time.sleep(2)
+        if vllm_processes:
+            logger.info(
+                f"Force-killing {len(vllm_processes)} vLLM process(es) still on GPU {gpu_idx}: "
+                f"{[(pid, command[:80]) for pid, command in vllm_processes]}"
+            )
+            for pid in vllm_pids:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Could not kill PID {pid}: {e}")
+
+        time.sleep(5)
+
+    @staticmethod
+    def _pid_command(pid: int) -> str:
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "args="],
+                text=True,
+                capture_output=True,
+            )
+        except Exception as e:
+            logger.warning(f"Could not inspect PID {pid}: {e}")
+            return ""
+
+        command = result.stdout.strip()
+        if result.returncode != 0 or not command:
+            return ""
+        return command
