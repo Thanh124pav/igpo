@@ -19,6 +19,7 @@ The corresponding `*_strategy` registration lets configs use
 from __future__ import annotations
 
 import copy
+import csv
 import hashlib
 import json
 import logging
@@ -56,6 +57,7 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         ingpo_demo_examples_per_tree: int = 2,  # how many SHARE / PRUNE demos to log per tree
         ingpo_demos_dir: Optional[str] = None,  # absolute path; else exp_root/ingpo_demos
         ingpo_log_demos_to_wandb: bool = False,  # for offline servers, default off
+        ingpo_log_reward_variance_nodes: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -64,12 +66,16 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         self.ingpo_share_inherit = ingpo_share_inherit
         self.ingpo_demo_examples_per_tree = int(ingpo_demo_examples_per_tree)
         self.ingpo_log_demos_to_wandb = bool(ingpo_log_demos_to_wandb)
+        self.ingpo_log_reward_variance_nodes = bool(ingpo_log_reward_variance_nodes)
         # Where to dump local-file demos. Resolves on first use because
         # exp_root is only set after super().__init__ on some SPO branches.
         self._ingpo_demos_dir_override = ingpo_demos_dir
         self._ingpo_demos_dir_resolved = None  # type: Optional[Any]
         self._ingpo_jsonl_handle = None
         self._ingpo_md_handle = None
+        self._ingpo_reward_variance_jsonl_handle = None
+        self._ingpo_reward_variance_csv_handle = None
+        self._ingpo_reward_variance_csv_writer = None
         self._tree_seen = 0
 
     # ------------------------------------------------------------------
@@ -123,10 +129,14 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
 
         # ---- Optional wandb scalar+table logging --------------------------
         if ingpo_stats or per_depth:
+            reward_variance_summary = self._summarize_reward_variance_nodes(
+                tree_copy
+            )
             log_entry = {
                 **ingpo_stats,
                 "ingpo/answer_set_size": tree_copy.get("ingpo_answer_set_size", 0),
                 "ingpo/tree_idx": self._tree_seen,
+                **reward_variance_summary,
                 **per_depth,
                 "ingpo/n_share_demos_in_tree": len(demo_rows["share"]),
                 "ingpo/n_prune_demos_in_tree": len(demo_rows["prune"]),
@@ -136,6 +146,12 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
                 if table is not None:
                     log_entry["ingpo/demos"] = table
             self._cloud_log(log_entry)
+
+        self._dump_reward_variance_nodes_to_disk(
+            tree=tree_copy,
+            tree_idx=self._tree_seen,
+            question_id=question_id,
+        )
 
         def BoK(value, bok=4):
             return 1 - (1 - value) ** bok
@@ -292,6 +308,164 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
                 )
         return self._ingpo_jsonl_handle, self._ingpo_md_handle
 
+    def _open_reward_variance_handles(self):
+        base = self._resolve_demos_dir()
+        if base is False:
+            return None, None
+        if self._ingpo_reward_variance_jsonl_handle is None:
+            self._ingpo_reward_variance_jsonl_handle = (
+                base / "reward_variance_nodes.jsonl"
+            ).open("a", buffering=1)
+        if self._ingpo_reward_variance_csv_handle is None:
+            csv_path = base / "reward_variance_nodes.csv"
+            needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
+            self._ingpo_reward_variance_csv_handle = csv_path.open(
+                "a", buffering=1, newline=""
+            )
+            self._ingpo_reward_variance_csv_writer = csv.DictWriter(
+                self._ingpo_reward_variance_csv_handle,
+                fieldnames=self._reward_variance_fieldnames(),
+                extrasaction="ignore",
+            )
+            if needs_header:
+                self._ingpo_reward_variance_csv_writer.writeheader()
+        return (
+            self._ingpo_reward_variance_jsonl_handle,
+            self._ingpo_reward_variance_csv_writer,
+        )
+
+    @staticmethod
+    def _reward_variance_fieldnames() -> List[str]:
+        return [
+            "tree_idx",
+            "question_id",
+            "depth",
+            "seg_id",
+            "parent_seg_id",
+            "action",
+            "reward",
+            "reward_std",
+            "empirical_child_reward_variance",
+            "ingpo_reward_variance",
+            "ingpo_sigma2",
+            "ingpo_sigma4",
+            "ingpo_tv_pair_count",
+            "ingpo_tv_support_size",
+            "ingpo_allocated_branch_factor",
+            "ingpo_budget_weight",
+            "ingpo_discarded_budget_candidates",
+            "n_children",
+        ]
+
+    @staticmethod
+    def _safe_float(value):
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _iter_reward_variance_rows(self, tree, tree_idx: int, question_id):
+        stack = [tree]
+        while stack:
+            node = stack.pop()
+            children = node.get("children") or []
+            child_rewards = [
+                self._safe_float(ch.get("reward"))
+                for ch in children
+                if self._safe_float(ch.get("reward")) is not None
+            ]
+            empirical_var = None
+            if child_rewards:
+                mean = sum(child_rewards) / len(child_rewards)
+                empirical_var = sum((r - mean) ** 2 for r in child_rewards) / len(
+                    child_rewards
+                )
+            row = {
+                "tree_idx": tree_idx,
+                "question_id": question_id,
+                "depth": node.get("ingpo_depth", node.get("depth")),
+                "seg_id": node.get("ingpo_segment_id"),
+                "parent_seg_id": node.get("ingpo_parent_segment_id"),
+                "action": node.get("ingpo_action"),
+                "reward": self._safe_float(node.get("reward")),
+                "reward_std": self._safe_float(node.get("reward_std")),
+                "empirical_child_reward_variance": empirical_var,
+                "ingpo_reward_variance": self._safe_float(
+                    node.get("ingpo_reward_variance")
+                ),
+                "ingpo_sigma2": self._safe_float(node.get("ingpo_sigma2")),
+                "ingpo_sigma4": self._safe_float(node.get("ingpo_sigma4")),
+                "ingpo_tv_pair_count": node.get("ingpo_tv_pair_count"),
+                "ingpo_tv_support_size": node.get("ingpo_tv_support_size"),
+                "ingpo_allocated_branch_factor": node.get(
+                    "ingpo_allocated_branch_factor"
+                ),
+                "ingpo_budget_weight": self._safe_float(
+                    node.get("ingpo_budget_weight")
+                ),
+                "ingpo_discarded_budget_candidates": node.get(
+                    "ingpo_discarded_budget_candidates"
+                ),
+                "n_children": len(children),
+            }
+            if row["ingpo_reward_variance"] is not None or row["reward"] is not None:
+                yield row
+            stack.extend(reversed(children))
+
+    def _summarize_reward_variance_nodes(self, tree) -> Dict[str, float]:
+        rows = list(
+            self._iter_reward_variance_rows(
+                tree=tree,
+                tree_idx=self._tree_seen,
+                question_id="",
+            )
+        )
+        variances = [
+            r["ingpo_reward_variance"]
+            for r in rows
+            if r["ingpo_reward_variance"] is not None
+        ]
+        rewards = [r["reward"] for r in rows if r["reward"] is not None]
+        out: Dict[str, float] = {
+            "ingpo/reward_variance_nodes/n": float(len(rows)),
+            "ingpo/reward_variance_nodes/n_with_variance": float(len(variances)),
+        }
+        if variances:
+            out["ingpo/reward_variance_nodes/mean_sigma2"] = float(
+                sum(variances) / len(variances)
+            )
+            out["ingpo/reward_variance_nodes/max_sigma2"] = float(max(variances))
+        if rewards:
+            out["ingpo/reward_variance_nodes/mean_reward"] = float(
+                sum(rewards) / len(rewards)
+            )
+        return out
+
+    def _dump_reward_variance_nodes_to_disk(
+        self,
+        tree,
+        tree_idx: int,
+        question_id,
+    ) -> None:
+        if not self.ingpo_log_reward_variance_nodes:
+            return
+
+        jsonl, csv_writer = self._open_reward_variance_handles()
+        if jsonl is None or csv_writer is None:
+            return
+
+        for row in self._iter_reward_variance_rows(tree, tree_idx, question_id):
+            try:
+                jsonl.write(json.dumps(row, default=str) + "\n")
+                csv_writer.writerow(row)
+            except Exception as exc:
+                logger.warning(
+                    f"InGPO: failed to append reward variance node record: {exc}"
+                )
+                return
+
     def _dump_demos_to_disk(
         self,
         tree_idx: int,
@@ -334,7 +508,12 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
             logger.warning(f"InGPO: failed to append demos.md: {exc}")
 
     def __del__(self):
-        for h in (self._ingpo_jsonl_handle, self._ingpo_md_handle):
+        for h in (
+            self._ingpo_jsonl_handle,
+            self._ingpo_md_handle,
+            self._ingpo_reward_variance_jsonl_handle,
+            self._ingpo_reward_variance_csv_handle,
+        ):
             try:
                 if h is not None:
                     h.close()
