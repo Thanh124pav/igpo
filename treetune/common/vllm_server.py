@@ -293,6 +293,22 @@ class VLLMServer(FromParams):
             logger.info("Server is not running.")
             return
 
+        # Capture our vLLM process tree BEFORE killing anything, so that the
+        # later force-kill on the GPU is strictly scoped to processes we own.
+        # Without this, a substring match on "vllm" in cmdline can also match
+        # training ranks (e.g. argv contains --vllm_port, config paths) and
+        # killing one would tear down the distributed group.
+        owned_pids = {self.process.pid}
+        try:
+            owned_pids.update(
+                child.pid
+                for child in psutil.Process(self.process.pid).children(recursive=True)
+            )
+        except psutil.NoSuchProcess:
+            pass
+        except Exception as e:
+            logger.warning(f"Could not enumerate vLLM children: {e}")
+
         self.process.kill()
         time.sleep(3)
 
@@ -331,11 +347,20 @@ class VLLMServer(FromParams):
         # On B200/newer GPUs, vLLM worker processes can hold CUDA memory even
         # after the main process is killed. Force-kill processes on this GPU.
         if self._gpu_idx is not None:
-            self._force_free_gpu_memory(self._gpu_idx)
+            self._force_free_gpu_memory(self._gpu_idx, owned_pids)
 
-    def _force_free_gpu_memory(self, gpu_idx: int):
-        """Kill remaining vLLM processes holding CUDA memory on a specific GPU."""
+    def _force_free_gpu_memory(self, gpu_idx: int, owned_pids: set):
+        """Kill remaining vLLM-owned processes holding CUDA memory on a GPU.
+
+        ``owned_pids`` must be the set of PIDs we spawned (main vLLM process
+        + its descendants), captured before tear-down. We intersect that with
+        the GPU's compute-apps list so we never touch unrelated processes
+        (e.g. training ranks) that happen to share the GPU.
+        """
         import signal
+
+        if not owned_pids:
+            return
 
         try:
             result = subprocess.run(
@@ -347,15 +372,16 @@ class VLLMServer(FromParams):
                 ],
                 text=True,
                 capture_output=True,
+                check=True,
             )
-            pids = [
+            gpu_pids = {
                 int(p.strip())
                 for p in result.stdout.splitlines()
                 if p.strip().isdigit()
-            ]
+            }
         except Exception as e:
             logger.warning(f"Could not query GPU {gpu_idx} processes: {e}")
-            pids = []
+            return
 
         vllm_processes = [
             (pid, command)
