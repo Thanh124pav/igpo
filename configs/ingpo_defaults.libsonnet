@@ -44,6 +44,10 @@
     budget_overhead_mode: 'flexible',
     budget_queue_count: 2,
     budget_queue_timeout_seconds: 0.5,
+    // When true, skip TV/budget allocation at the final expansion depth and
+    // use uniform SPO-style branch factor B instead. This avoids near-leaf
+    // context exhaustion from TV probe continuations.
+    skip_near_leaf_expand: false,
 
     // Edge handling
     zero_advantage_when_pruned: true,

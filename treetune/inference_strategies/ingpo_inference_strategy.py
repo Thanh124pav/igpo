@@ -98,6 +98,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_budget_overhead_mode: str = "flexible",
         ingpo_budget_queue_count: int = 2,
         ingpo_budget_queue_timeout_seconds: float = 0.5,
+        ingpo_skip_near_leaf_expand: bool = False,
         # Inherited ----------------------------------------------------------
         **kwargs: Any,
     ):
@@ -143,6 +144,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_budget_queue_timeout_seconds = float(
             ingpo_budget_queue_timeout_seconds
         )
+        self.ingpo_skip_near_leaf_expand = bool(ingpo_skip_near_leaf_expand)
         self._lp_client: Optional[VLLMLogprobClient] = None
 
     # ------------------------------------------------------------------
@@ -984,6 +986,54 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             branch_factor_by_depth[depth] = base_branch_factor
             requested_by_depth[depth] = total_depth_budget
 
+            if self.ingpo_skip_near_leaf_expand and depth == max_depth - 1:
+                # The final expansion depth is the most likely place to run out
+                # of context (e.g. TV second-phase max_tokens being clipped to a
+                # tiny value).  Optionally skip TV/budget allocation here and
+                # fall back to SPO-style uniform expansion with branch factor B.
+                variance_seconds_by_depth[depth] = 0.0
+                allocation_seconds_by_depth[depth] = 0.0
+                allocated_by_depth[depth] = total_depth_budget
+                underallocated_by_depth[depth] = 0
+
+                t_expand = time.time()
+                built_total = 0
+                for node in expandable:
+                    node["ingpo_allocated_branch_factor"] = base_branch_factor
+                    node["ingpo_budget_weight"] = 1.0
+                    node["ingpo_budget_candidates"] = []
+                    children = await _expand_with_budget(
+                        current_node=node,
+                        prefix=node.get("full_text", ""),
+                        depth=depth,
+                        max_tokens=None,
+                        branch_factor=base_branch_factor,
+                    )
+                    for child_idx, child in enumerate(children):
+                        child["ingpo_segment_id"] = (
+                            f"{node.get('ingpo_segment_id', 'root')}/{depth}/{child_idx}"
+                        )
+                        child["ingpo_parent_segment_id"] = node.get(
+                            "ingpo_segment_id", "root"
+                        )
+                        child["ingpo_depth"] = depth + 1
+                        child["ingpo_action"] = Action.EXPAND.value
+                        child["depth"] = depth + 1
+                        child["reward"], _ = self.reward_function(
+                            query=node.get("full_text", ""),
+                            response=child.get("full_text", child.get("text", "")),
+                            dataset_instance=data_instance,
+                        )
+                        child["leaf"] = True
+                    node["children"] = children
+                    node["ingpo_discarded_budget_candidates"] = 0
+                    built_total += len(children)
+                    _set_reward_summary(node)
+                expansion_seconds_by_depth[depth] = time.time() - t_expand
+                built_by_depth[depth] = built_total
+                frontier = []
+                continue
+
             t_var = time.time()
             estimate_tasks = [
                 asyncio.create_task(tv_estimator.estimate_for_parent(node, depth=depth))
@@ -1087,6 +1137,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         tree["ingpo_allocation_seconds_by_depth"] = dict(allocation_seconds_by_depth)
         tree["ingpo_expansion_seconds_by_depth"] = dict(expansion_seconds_by_depth)
         tree["ingpo_budget_overhead_mode"] = self.ingpo_budget_overhead_mode
+        tree["ingpo_skip_near_leaf_expand"] = self.ingpo_skip_near_leaf_expand
         tree["ingpo_answer_set_size"] = 0
         tree_construction_seconds = time.time() - t0_tree
         tree["tree_construction_seconds"] = tree_construction_seconds

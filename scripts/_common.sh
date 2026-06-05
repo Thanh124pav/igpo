@@ -130,6 +130,9 @@ ensure_runtime_config() {
   if [[ -n "${INGPO_BUDGET_QUEUE_COUNT:-}" ]]; then
     ingpo_inference_overrides+="      ingpo_budget_queue_count: ${INGPO_BUDGET_QUEUE_COUNT},"$'\n'
   fi
+  if [[ -n "${INGPO_SKIP_NEAR_LEAF_EXPAND:-}" ]]; then
+    ingpo_inference_overrides+="      ingpo_skip_near_leaf_expand: $(jsonnet_value "${INGPO_SKIP_NEAR_LEAF_EXPAND}"),"$'\n'
+  fi
 
   mkdir -p "${gen_dir}"
   cat > "${out}" <<EOF

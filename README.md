@@ -124,6 +124,7 @@ Tham số mặc định (`configs/ingpo_defaults.libsonnet`):
 | `share_target` | `nearest` | Target để share value (`nearest`/`parent`/`root`) |
 | `local_value_share` | true | Path local (so sánh siblings) hay global (qua Y) |
 | `demo_examples_per_tree` | 2 | Số SHARE/PRUNE demo lưu mỗi cây |
+| `skip_near_leaf_expand` | false | Budget allocation: ở depth cuối, bỏ TV/budget allocation và expand uniform theo branch factor B |
 
 Override trong file `.jsonnet`:
 
