@@ -911,28 +911,38 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 max_tokens=continuation_budget,
                 branch_factor=1,
             )
-            if continuations:
-                cont = continuations[0]
-                child["text"] = child.get("text", "") + cont.get("text", "")
-                child["full_text"] = cont.get("full_text", child.get("full_text", ""))
-                child["finish_reason"] = cont.get(
-                    "finish_reason", child.get("finish_reason")
+            if not continuations:
+                logger.warning(
+                    "Budget candidate continuation produced no nodes; marking %s as leaf",
+                    child.get("ingpo_segment_id"),
                 )
-                child["stop_text"] = cont.get("stop_text", child.get("stop_text"))
-                if (
-                    child.get("sum_logprobs") is not None
-                    and cont.get("sum_logprobs") is not None
-                ):
-                    child["sum_logprobs"] = float(child["sum_logprobs"]) + float(
-                        cont["sum_logprobs"]
-                    )
-                if (
-                    child.get("num_tokens") is not None
-                    and cont.get("num_tokens") is not None
-                ):
-                    child["num_tokens"] = int(child["num_tokens"]) + int(
-                        cont["num_tokens"]
-                    )
+                child["reward"], _ = self.reward_function(
+                    query=parent.get("full_text", ""),
+                    response=child.get("full_text", child.get("text", "")),
+                    dataset_instance=data_instance,
+                )
+                child["leaf"] = True
+                return child
+
+            cont = continuations[0]
+            child["text"] = child.get("text", "") + cont.get("text", "")
+            child["full_text"] = cont.get("full_text", child.get("full_text", ""))
+            child["finish_reason"] = cont.get(
+                "finish_reason", child.get("finish_reason")
+            )
+            child["stop_text"] = cont.get("stop_text", child.get("stop_text"))
+            if (
+                child.get("sum_logprobs") is not None
+                and cont.get("sum_logprobs") is not None
+            ):
+                child["sum_logprobs"] = float(child["sum_logprobs"]) + float(
+                    cont["sum_logprobs"]
+                )
+            if (
+                child.get("num_tokens") is not None
+                and cont.get("num_tokens") is not None
+            ):
+                child["num_tokens"] = int(child["num_tokens"]) + int(cont["num_tokens"])
             return child
 
         def _set_reward_summary(node: Node) -> None:

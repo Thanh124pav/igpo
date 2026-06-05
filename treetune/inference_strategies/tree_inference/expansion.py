@@ -283,12 +283,11 @@ class EfficientIIDExpander(NodeExpander):
         # For simplicity, we just always set logprobs to 1
         if "logprobs" not in program_kwargs:
             program_kwargs["logprobs"] = 0
-        
+
         program_kwargs["logprobs"] = 0
 
         # else:
         #     assert program_kwargs["logprobs"] == 1, "logprobs must be 1"
-
 
         if "num_samples" in program_kwargs:
             program_kwargs.pop("num_samples")
@@ -319,12 +318,12 @@ class EfficientIIDExpander(NodeExpander):
             assert self.tokenizer is not None, "tokenizer must be provided"
 
     async def _sample_node(
-        self, 
-        prefix: str, 
-        depth: int, 
+        self,
+        prefix: str,
+        depth: int,
         branch_factor: int,
         max_tokens: Optional[int] = None,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
     ) -> List[Node]:
         program_kwargs = self.program_kwargs.copy()
 
@@ -358,8 +357,19 @@ class EfficientIIDExpander(NodeExpander):
         result = await self._run_program(program, prefix=prefix)
 
         variables = result.variables()
+        if "chain_of_thought" not in variables:
+            logger.warning(
+                "Skipping expansion result without `chain_of_thought` at depth=%s "
+                "branch_factor=%s. Available variables: %s",
+                depth,
+                branch_factor,
+                sorted(variables.keys()),
+            )
+            return []
         generated_chain_of_thoughts = variables["chain_of_thought"]
-        finish_reasons = variables["chain_of_thought_finish_reason"]
+        finish_reasons = variables.get("chain_of_thought_finish_reason")
+        if finish_reasons is None:
+            finish_reasons = [None] * branch_factor if branch_factor > 1 else None
         # logprobs =  variables["chain_of_thought_logprobs"]
         # tokens = variables["chain_of_thought_tokens"]
 
@@ -386,11 +396,11 @@ class EfficientIIDExpander(NodeExpander):
             # full_text = re.sub(r"\{\{gen(.|\s)*}}", node_text, full_text)
 
             node = {
-                "text": node_text, # model response
+                "text": node_text,  # model response
                 "depth": depth,
-                "full_text": full_text, # prompt + model response
-                "stop_text": None, # not used
-                "finish_reason": finish_reason, # `length` means truncated
+                "full_text": full_text,  # prompt + model response
+                "stop_text": None,  # not used
+                "finish_reason": finish_reason,  # `length` means truncated
                 # "logprob": logprob,
                 # "tokens": token
             }
@@ -408,13 +418,13 @@ class EfficientIIDExpander(NodeExpander):
         )
 
     async def expand(
-            self, 
-            current_node: Node, 
-            prefix: str, 
-            depth: int,
-            max_tokens: Optional[int] = None,
-            branch_factor: Optional[int] = None
-        ) -> List[Node]:
+        self,
+        current_node: Node,
+        prefix: str,
+        depth: int,
+        max_tokens: Optional[int] = None,
+        branch_factor: Optional[int] = None,
+    ) -> List[Node]:
         if branch_factor is None:
             branch_factor = self.branch_factor_strategy(current_node)
         tasks = []
@@ -423,7 +433,9 @@ class EfficientIIDExpander(NodeExpander):
             if seed is not None:
                 seed += i
             task = asyncio.create_task(
-                self._sample_node(prefix, depth + 1, branch_factor, max_tokens=max_tokens, seed=seed)
+                self._sample_node(
+                    prefix, depth + 1, branch_factor, max_tokens=max_tokens, seed=seed
+                )
             )
             tasks.append(task)
 
