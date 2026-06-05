@@ -23,7 +23,7 @@ from treetune.inference_strategies.tree_inference import Node
 from treetune.logging_utils import get_logger
 
 from treetune.ingpo.logging_helpers import aggregate_tree_stats
-from treetune.ingpo.thresholds import ThresholdConfig, tv_to_value_bound
+from treetune.ingpo.thresholds import ThresholdConfig # tv_to_value_bound
 from treetune.ingpo.budget_allocation import allocate_branch_factors
 from treetune.ingpo.budget_scheduler import FlexibleBudgetScheduler
 from treetune.ingpo.tv_estimators import ConditionalTVEstimator
@@ -526,7 +526,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     len(continuations), self.cfg_thresholds.alpha
                 )
                 tv_for_bound = tv + radius if self.ingpo_share_use_confidence else tv
-                value_bound = tv_to_value_bound(tv_for_bound, self.cfg_thresholds)
+                value_bound = tv_for_bound #tv_to_value_bound(tv_for_bound, self.cfg_thresholds)
                 if src.get("ingpo_action") != Action.EXPAND.value:
                     continue
                 if tgt.get("ingpo_action") != Action.EXPAND.value:

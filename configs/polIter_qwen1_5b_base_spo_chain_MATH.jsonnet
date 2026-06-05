@@ -173,5 +173,6 @@ local num_mc_rollouts = 9;
 }
 + (import 'qwen1_5b_base_for_MATH_eval.jsonnet')
 + (import 'trainers/lam1.jsonnet')
-+ (import 'trainers/refKl0.0001.jsonnet')
+// + (import 'trainers/refKl0.0001.jsonnet')
++ (import 'trainers/refKl0.0.jsonnet')
 + (import 'trainers/klLoss.jsonnet')

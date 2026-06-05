@@ -64,6 +64,7 @@ class PolicyIterationRuntime(DistributedRuntime):
         analyzers: Optional[List[JsonDict]] = None,
         prompt_library: Optional[JsonDict] = None,
         evaluate_gpu: Optional[int] = 0,
+        ingpo: Optional[JsonDict] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)

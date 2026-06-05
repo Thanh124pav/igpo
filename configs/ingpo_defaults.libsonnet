@@ -57,7 +57,7 @@
 
     // Logging: how many SHARE / PRUNE demo rows to dump per tree.
     // Set 0 to skip demo files entirely (per-depth rates stay on).
-    demo_examples_per_tree: 2,
+    demo_examples_per_tree: 4,
 
     // Where to write `demos.jsonl` + `demos.md` (offline-friendly). When
     // null they go under <APP_DIRECTORY>/<exp>/ingpo_demos/. Override with
