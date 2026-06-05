@@ -63,13 +63,12 @@ def test_conditional_tv_estimator_caches_logp_matrix_scores():
     assert set(first.pair_tvs) == {(0, 1)}
 
 
-def test_pair_tvs_can_use_half_factor():
+def test_pair_tvs_use_half_factor_by_default():
     estimator = ConditionalTVEstimator(
         scorer=FakeScorer(),
         node_expander=FakeExpander(),
         gamma=0.5,
         n_tv_estimates=2,
-        tv_includes_half_factor=True,
     )
 
     pair_tvs = estimator._pair_tvs([[1.0, 0.0], [0.0, 1.0]])

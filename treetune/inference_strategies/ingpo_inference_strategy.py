@@ -66,7 +66,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_n_tv_estimates: int = 8,
         ingpo_tv_subnode_max_tokens: int = 120,
         ingpo_tv_second_phase_tokens: int = 60,
-        ingpo_tv_includes_half_factor: bool = False,
+        ingpo_tv_includes_half_factor: bool = True,
         ingpo_budget_lambda: float = 0.02,
         ingpo_budget_overhead_mode: str = "flexible",
         ingpo_budget_queue_count: int = 2,
@@ -118,6 +118,20 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_root_allocation = bool(ingpo_root_allocation)
         self._lp_client: Optional[VLLMLogprobClient] = None
 
+
+    def _budget_tv_first_phase_tokens(self) -> int:
+        """Return the first-phase TV probe budget capped by the node budget M.
+
+        Budget-allocation reuses first-phase TV probes as real child prefixes.
+        Therefore a probe should not consume more tokens than an ordinary
+        non-terminal SPO-tree expansion would consume at the same node.
+        """
+
+        tokens = max(int(self.ingpo_tv_subnode_max_tokens), 1)
+        if self.M is not None:
+            tokens = min(tokens, max(int(self.M), 1))
+        return tokens
+
     # ------------------------------------------------------------------
     # vLLM scoring client
     # ------------------------------------------------------------------
@@ -166,7 +180,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             gamma=self.cfg_thresholds.gamma,
             mode=self.ingpo_tv_estimator,
             n_tv_estimates=self.ingpo_n_tv_estimates,
-            first_phase_tokens=self.ingpo_tv_subnode_max_tokens,
+            first_phase_tokens=self._budget_tv_first_phase_tokens(),
             second_phase_tokens=self.ingpo_tv_second_phase_tokens,
             tv_includes_half_factor=self.ingpo_tv_includes_half_factor,
         )
@@ -626,6 +640,30 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 len(children),
             )
 
+            # Attach InGPO metadata before local sibling gates run.  The
+            # SHARE/PRUNE gate filters on ``ingpo_action`` and records segment
+            # ids, so running it on raw expander output makes every fresh child
+            # invisible.  Do this once here and avoid resetting actions below,
+            # otherwise a successful SHARE/PRUNE decision would be overwritten.
+            for ch_idx, child in enumerate(children):
+                child_seg_id = child.get(
+                    "ingpo_segment_id",
+                    f"{node.get('ingpo_segment_id', 'root')}/{depth}/{ch_idx}",
+                )
+                child["ingpo_segment_id"] = child_seg_id
+                child.setdefault("ingpo_action", Action.EXPAND.value)
+                child["ingpo_depth"] = depth + 1
+                child["ingpo_parent_segment_id"] = node.get("ingpo_segment_id", "root")
+                if child.get("finish_reason") != "length":
+                    child["reward"], _ = self.reward_function(
+                        query=prefix,
+                        response=child.get("full_text", child.get("text", "")),
+                        dataset_instance=data_instance,
+                    )
+                    child["leaf"] = True
+                else:
+                    child["leaf"] = False
+
             # Run local sibling triggers early (before probing every child) so
             # share/prune can stop branches without paying extra probe cost.
             if use_local_value_share and (
@@ -634,25 +672,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 await _try_local_value_share_and_prune(node, children)
 
             probe_tasks = []
-            for ch_idx, child in enumerate(children):
-                child_seg_id = child.get(
-                    "ingpo_segment_id",
-                    f"{node.get('ingpo_segment_id', 'root')}/{depth}/{ch_idx}",
-                )
-                child["ingpo_segment_id"] = child_seg_id
-                child["ingpo_action"] = Action.EXPAND.value
-                child["ingpo_depth"] = depth + 1
-                child["ingpo_parent_segment_id"] = node.get("ingpo_segment_id", "root")
-                if child["finish_reason"] != "length":
-                    child["reward"], _ = self.reward_function(
-                        query=prefix,
-                        response=child["full_text"],
-                        dataset_instance=data_instance,
-                    )
-                    child["leaf"] = True
+            for child in children:
+                if child.get("ingpo_action") != Action.EXPAND.value:
                     continue
-
-                child["leaf"] = False
+                if child.get("leaf", False):
+                    continue
                 if depth + 1 < max_depth:
                     probe_tasks.append(
                         (
@@ -770,7 +794,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             gamma=self.cfg_thresholds.gamma,
             mode=self.ingpo_tv_estimator,
             n_tv_estimates=self.ingpo_n_tv_estimates,
-            first_phase_tokens=self.ingpo_tv_subnode_max_tokens,
+            first_phase_tokens=self._budget_tv_first_phase_tokens(),
             second_phase_tokens=self.ingpo_tv_second_phase_tokens,
             tv_includes_half_factor=self.ingpo_tv_includes_half_factor,
         )
@@ -836,11 +860,22 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 child["leaf"] = True
                 return child
 
-            continuation_budget = self.M
-            if self.ingpo_tv_subnode_max_tokens > 0:
-                continuation_budget = max(
-                    int(self.M) - self.ingpo_tv_subnode_max_tokens, 1
+            if self.M is None:
+                continuation_budget = None
+            else:
+                first_phase_tokens = int(
+                    child.get("num_tokens") or self._budget_tv_first_phase_tokens()
                 )
+                continuation_budget = int(self.M) - first_phase_tokens
+                if continuation_budget <= 0:
+                    child["reward"], _ = self.reward_function(
+                        query=parent.get("full_text", ""),
+                        response=child.get("full_text", child.get("text", "")),
+                        dataset_instance=data_instance,
+                    )
+                    child["leaf"] = True
+                    child["ingpo_stopped_no_token_budget"] = True
+                    return child
             continuations = await _expand_with_budget(
                 current_node=child,
                 prefix=child.get("full_text", ""),
@@ -880,6 +915,13 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 and cont.get("num_tokens") is not None
             ):
                 child["num_tokens"] = int(child["num_tokens"]) + int(cont["num_tokens"])
+            if child.get("finish_reason") != "length":
+                child["reward"], _ = self.reward_function(
+                    query=parent.get("full_text", ""),
+                    response=child.get("full_text", child.get("text", "")),
+                    dataset_instance=data_instance,
+                )
+                child["leaf"] = True
             return child
 
         def _set_reward_summary(node: Node) -> None:
@@ -1089,7 +1131,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                         current_node=node,
                         prefix=node.get("full_text", ""),
                         depth=depth,
-                        max_tokens=self.ingpo_tv_subnode_max_tokens,
+                        max_tokens=self._budget_tv_first_phase_tokens(),
                         branch_factor=allocated - len(selected),
                     )
                     selected.extend(extra_candidates)

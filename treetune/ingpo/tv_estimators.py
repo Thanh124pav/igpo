@@ -11,12 +11,13 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
+
+from treetune.ingpo.budget_allocation import reward_variance_from_pair_tvs
+from treetune.ingpo.local_value_share import stable_softmax
 
 
 Node = Dict[str, Any]
-from treetune.ingpo.budget_allocation import reward_variance_from_pair_tvs
-from treetune.ingpo.local_value_share import stable_softmax
 
 
 PairKey = Tuple[int, int]
@@ -50,7 +51,7 @@ class ConditionalTVEstimator:
         n_tv_estimates: int = 8,
         first_phase_tokens: int = 120,
         second_phase_tokens: int = 60,
-        tv_includes_half_factor: bool = False,
+        tv_includes_half_factor: bool = True,
     ):
         if mode not in {"subnode", "hierachical", "hierarchical"}:
             raise ValueError(f"Unsupported TV estimator mode: {mode}")
