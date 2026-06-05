@@ -7,7 +7,7 @@ Implements PLAN.md Def 2.3:
                  + 0.5 * ( exp(delta_a) + exp(delta_b) )
 
 The +0.5*(exp(delta_a)+exp(delta_b)) tail accounts for the residual mass
-outside the answer set Y; it bounds the true total variation between the two
+outside the sampled support; it bounds the true total variation between the two
 conditional distributions over completions.
 """
 

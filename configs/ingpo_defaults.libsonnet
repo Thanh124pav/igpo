@@ -23,11 +23,6 @@
     share_pair_budget_fraction: 0.25,  // roughly (W/2)^2 sibling pairs
     share_use_confidence: false,
 
-    // Y generation
-    y_temperature: 0.7,
-    y_max_tokens: 512,
-    y_field: 'answer',
-
     // Tail-fill concurrency to vLLM /completions
     score_concurrency: 64,
 

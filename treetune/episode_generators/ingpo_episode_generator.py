@@ -126,7 +126,6 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
             stats=ingpo_stats,
             per_depth=per_depth,
             demo_rows=demo_rows,
-            answer_set_size=tree_copy.get("ingpo_answer_set_size", 0),
             tree_construction_seconds=tree_copy.get(
                 "tree_construction_seconds",
                 tree_copy.get("ingpo_tree_construction_seconds"),
@@ -138,7 +137,6 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
             reward_variance_summary = self._summarize_reward_variance_nodes(tree_copy)
             log_entry = {
                 **ingpo_stats,
-                "ingpo/answer_set_size": tree_copy.get("ingpo_answer_set_size", 0),
                 "ingpo/tree_idx": self._tree_seen,
                 **reward_variance_summary,
                 **per_depth,
@@ -504,7 +502,6 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         stats: Dict[str, Any],
         per_depth: Dict[str, float],
         demo_rows: Dict[str, List[List[Any]]],
-        answer_set_size: int,
         tree_construction_seconds: Optional[float] = None,
     ) -> None:
         if max(self.ingpo_demo_examples_per_tree, 0) == 0 and not stats:
@@ -518,7 +515,6 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         record = to_jsonl_record(
             tree_idx=tree_idx,
             question_id=question_id,
-            answer_set_size=answer_set_size,
             stats=stats,
             per_depth=per_depth,
             demo_rows=demo_rows,

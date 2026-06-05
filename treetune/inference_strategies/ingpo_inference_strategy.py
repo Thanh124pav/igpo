@@ -1,38 +1,20 @@
-"""InGPO inference strategy: SPO-tree with online Share / Prune triggers.
+"""InGPO inference strategy: SPO-tree with budget allocation and local TV gates.
 
-Subclasses `HybridInferenceStrategy` from SPO and overrides `_construct_tree`
-so that for every freshly-expanded child segment we:
-
-  1. Compute K fast logprobs `log pi(y_i | traj(child))` against the
-     per-problem answer set Y.
-  2. Consult the `TriggerEngine` for SHARE / PRUNE / EXPAND.
-  3. Annotate the child node with `ingpo_action`, `ingpo_share_target`,
-     `ingpo_avg_lp_K`, `ingpo_avg_lp_m`, `ingpo_tv_m`.
-  4. Skip recursion into SHARE / PRUNE children — but keep them in the tree
-     because the downstream episode generator still consumes them as edges.
-
-The answer set Y is built once per problem at `depth==1` (i.e. before the
-first batch of root children is expanded), in parallel with that expansion.
-
-All other behaviour — branch_factor strategy, segment cap M, reward
-function, full_text accounting — is inherited unchanged from SPO so the
-codepath remains identical to a faithful SPO-tree run when triggers are
-disabled.
+The current production path is `budget_allocation`: TV probes estimate reward
+variance for frontier nodes and branch budget is assigned across those nodes.
+The legacy reference-solution generation path has been removed from this strategy;
+any SHARE/PRUNE mode that remains here uses only sibling-local TV comparisons.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Sequence
 
 import math
-import openai
-
-from treetune.common import Lazy
 from treetune.inference_strategies.base_inference_strategy import InferenceStrategy
 from treetune.inference_strategies.hybrid_inference_strategy import (
     HybridInferenceStrategy,
@@ -40,17 +22,12 @@ from treetune.inference_strategies.hybrid_inference_strategy import (
 from treetune.inference_strategies.tree_inference import Node
 from treetune.logging_utils import get_logger
 
-from treetune.ingpo.answer_set import (
-    DEFAULT_Y_PROMPT_TEMPLATE,
-    AnswerSet,
-    AnswerSetGenerator,
-)
 from treetune.ingpo.logging_helpers import aggregate_tree_stats
 from treetune.ingpo.thresholds import ThresholdConfig, tv_to_value_bound
 from treetune.ingpo.budget_allocation import allocate_branch_factors
 from treetune.ingpo.budget_scheduler import FlexibleBudgetScheduler
 from treetune.ingpo.tv_estimators import ConditionalTVEstimator
-from treetune.ingpo.triggers import Action, TriggerEngine
+from treetune.ingpo.triggers import Action
 from treetune.ingpo.local_value_share import (
     LocalShareDecision,
     confidence_radius,
@@ -83,10 +60,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_local_value_share: bool = True,
         ingpo_share_pair_budget_fraction: float = 0.25,
         ingpo_share_use_confidence: bool = False,
-        ingpo_y_prompt_template: str = DEFAULT_Y_PROMPT_TEMPLATE,
-        ingpo_y_temperature: float = 0.7,
-        ingpo_y_max_tokens: int = 512,
-        ingpo_y_field: str = "answer",  # field on data_instance with gold
         ingpo_score_concurrency: int = 64,
         ingpo_algorithm_mode: str = "budget_allocation",
         ingpo_tv_estimator: str = "subnode",
@@ -120,10 +93,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_local_value_share = bool(ingpo_local_value_share)
         self.ingpo_share_pair_budget_fraction = float(ingpo_share_pair_budget_fraction)
         self.ingpo_share_use_confidence = bool(ingpo_share_use_confidence)
-        self.ingpo_y_prompt_template = ingpo_y_prompt_template
-        self.ingpo_y_temperature = float(ingpo_y_temperature)
-        self.ingpo_y_max_tokens = int(ingpo_y_max_tokens)
-        self.ingpo_y_field = ingpo_y_field
         self.ingpo_score_concurrency = int(ingpo_score_concurrency)
         if ingpo_algorithm_mode not in {"share_prune", "budget_allocation"}:
             raise ValueError(
@@ -315,56 +284,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             return {}
         return {"root_allocation_info": root_allocation_info}
 
-    # ------------------------------------------------------------------
-    # Build per-problem Y
-    # ------------------------------------------------------------------
-
-    async def _build_answer_set(
-        self,
-        problem_id: str,
-        problem_text: str,
-        gold: str,
-    ) -> AnswerSet:
-        client = (
-            openai.AsyncOpenAI(
-                api_key=self._lp_client.api_key,
-                base_url=self._lp_client.api_base,
-            )
-            if self._lp_client is not None
-            else None
-        )
-
-        async def sample_fn(prompt: str, n: int, temperature: float, max_tokens: int):
-            if client is None:
-                return []
-            resp = await client.completions.create(
-                model=self._lp_client.model,
-                prompt=prompt,
-                n=n,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return [c.text for c in resp.choices]
-
-        gen = AnswerSetGenerator(
-            sample_fn=sample_fn,
-            m=self.ingpo_m,
-            temperature=self.ingpo_y_temperature,
-            max_tokens=self.ingpo_y_max_tokens,
-            prompt_template=self.ingpo_y_prompt_template,
-        )
-        try:
-            return await gen.build(
-                problem_id=problem_id, problem=problem_text, gold=gold
-            )
-        except Exception as exc:
-            logger.warning(f"Y generation failed for problem {problem_id}: {exc}")
-            return AnswerSet(problem_id=problem_id, gold=gold, y=[])
-
-    # ------------------------------------------------------------------
-    # Override tree construction
-    # ------------------------------------------------------------------
-
     async def _construct_tree(
         self,
         initial_prompt: str,
@@ -384,28 +303,19 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         client = self._ensure_lp_client()
         scorer = make_lp_scorer(client, self._tokenize)
 
-        problem_text = data_instance.get("problem") if data_instance else None
-        gold = data_instance.get(self.ingpo_y_field) if data_instance else None
         problem_id = (
             str(data_instance.get("_treetune__idx", uuid.uuid4()))
             if data_instance
             else str(uuid.uuid4())
         )
 
-        needs_answer_set = self.ingpo_enable_share and not self.ingpo_local_value_share
-
-        # The sibling-local ValueShare / Prune path does not need Y.  We only
-        # build Y for the legacy answer-set ValueShare trigger.
-        answer_set: AnswerSet = AnswerSet(problem_id=problem_id, gold=gold or "", y=[])
-        y_task = (
-            asyncio.create_task(
-                self._build_answer_set(problem_id, problem_text or "", gold or "")
+        use_local_value_share = self.ingpo_local_value_share
+        if self.ingpo_enable_share and not use_local_value_share:
+            logger.warning(
+                "InGPO reference-solution ValueShare has been removed; using sibling-local TV gates instead."
             )
-            if needs_answer_set
-            else None
-        )
+            use_local_value_share = True
 
-        engine: Optional[TriggerEngine] = None
         local_shared_count = 0
         local_avg_tv_share = 0.0
         local_pruned_count = 0
@@ -430,31 +340,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             "ingpo_action": Action.EXPAND.value,
             "ingpo_segment_id": "root",
         }
-
-        async def _ensure_engine() -> Optional[TriggerEngine]:
-            nonlocal engine, answer_set
-            if not needs_answer_set or y_task is None:
-                return None
-            if engine is not None:
-                return engine
-            answer_set = await y_task
-            if answer_set.m == 0:
-                logger.warning(
-                    "InGPO: empty answer set; falling back to vanilla SPO-tree expansion"
-                )
-                return None
-            engine = TriggerEngine(
-                answer_set=answer_set,
-                scorer=scorer,
-                thresholds=self.cfg_thresholds,
-                enable_share=self.ingpo_enable_share
-                and not self.ingpo_local_value_share,
-                enable_prune=False,
-                share_target=self.ingpo_share_target,
-                root_segment_id="root",
-            )
-            await engine.register_root(initial_prompt)
-            return engine
 
         def _share_eta() -> float:
             if self.cfg_thresholds.eta_override is not None:
@@ -638,16 +523,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     src["leaf"] = True
                     src["reward"] = float("nan")
                     src.pop("children", None)
-                    if engine is not None:
-                        if engine.stats.expanded > 0:
-                            engine.stats.expanded -= 1
-                        engine.stats.update_share(tv)
-                    else:
-                        n = local_shared_count + 1
-                        local_avg_tv_share = (
-                            local_avg_tv_share * local_shared_count + tv
-                        ) / n
-                        local_shared_count = n
+                    n = local_shared_count + 1
+                    local_avg_tv_share = (
+                        local_avg_tv_share * local_shared_count + tv
+                    ) / n
+                    local_shared_count = n
 
             if not self.ingpo_enable_prune:
                 return
@@ -691,16 +571,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     child["reward"] = float("nan")
                     child.pop("children", None)
 
-                    if engine is not None:
-                        if engine.stats.expanded > 0:
-                            engine.stats.expanded -= 1
-                        engine.stats.update_prune(weighted_bound)
-                    else:
-                        n = local_pruned_count + 1
-                        local_avg_gap_prune = (
-                            local_avg_gap_prune * local_pruned_count + weighted_bound
-                        ) / n
-                        local_pruned_count = n
+                    n = local_pruned_count + 1
+                    local_avg_gap_prune = (
+                        local_avg_gap_prune * local_pruned_count + weighted_bound
+                    ) / n
+                    local_pruned_count = n
 
         def _set_reward_summary(node: Node) -> None:
             child_rewards = []
@@ -751,11 +626,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 len(children),
             )
 
-            local_engine = await _ensure_engine()
-
             # Run local sibling triggers early (before probing every child) so
             # share/prune can stop branches without paying extra probe cost.
-            if self.ingpo_local_value_share and (
+            if use_local_value_share and (
                 self.ingpo_enable_share or self.ingpo_enable_prune
             ):
                 await _try_local_value_share_and_prune(node, children)
@@ -777,99 +650,25 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                         dataset_instance=data_instance,
                     )
                     child["leaf"] = True
-                    if local_engine is not None:
-                        try:
-                            decision = await local_engine.decide(
-                                segment_id=child_seg_id,
-                                parent_id=node.get("ingpo_segment_id", "root"),
-                                prefix=child["full_text"],
-                                is_leaf=True,
-                            )
-                            self._annotate_node(child, decision)
-                        except Exception as exc:
-                            logger.warning(f"InGPO decide() failed (leaf): {exc}")
                     continue
 
                 child["leaf"] = False
-                if local_engine is None:
-                    if depth + 1 < max_depth:
-                        probe_tasks.append(
-                            (
-                                child,
-                                asyncio.create_task(
-                                    self.node_expander.expand(
-                                        current_node=child,
-                                        prefix=child["full_text"],
-                                        depth=depth + 1,
-                                        max_tokens=(
-                                            None
-                                            if depth + 1 == max_depth - 1
-                                            else self.M
-                                        ),
-                                    )
-                                ),
-                            )
+                if depth + 1 < max_depth:
+                    probe_tasks.append(
+                        (
+                            child,
+                            asyncio.create_task(
+                                self.node_expander.expand(
+                                    current_node=child,
+                                    prefix=child["full_text"],
+                                    depth=depth + 1,
+                                    max_tokens=(
+                                        None if depth + 1 == max_depth - 1 else self.M
+                                    ),
+                                )
+                            ),
                         )
-                    continue
-
-                try:
-                    decision = await local_engine.decide(
-                        segment_id=child_seg_id,
-                        parent_id=node.get("ingpo_segment_id", "root"),
-                        prefix=child["full_text"],
-                        is_leaf=False,
                     )
-                except Exception as exc:
-                    logger.warning(f"InGPO decide() failed: {exc}")
-                    if depth + 1 < max_depth:
-                        probe_tasks.append(
-                            (
-                                child,
-                                asyncio.create_task(
-                                    self.node_expander.expand(
-                                        current_node=child,
-                                        prefix=child["full_text"],
-                                        depth=depth + 1,
-                                        max_tokens=(
-                                            None
-                                            if depth + 1 == max_depth - 1
-                                            else self.M
-                                        ),
-                                    )
-                                ),
-                            )
-                        )
-                    continue
-
-                self._annotate_node(child, decision)
-
-                if decision.action is Action.EXPAND:
-                    if depth + 1 < max_depth:
-                        probe_tasks.append(
-                            (
-                                child,
-                                asyncio.create_task(
-                                    self.node_expander.expand(
-                                        current_node=child,
-                                        prefix=child["full_text"],
-                                        depth=depth + 1,
-                                        max_tokens=(
-                                            None
-                                            if depth + 1 == max_depth - 1
-                                            else self.M
-                                        ),
-                                    )
-                                ),
-                            )
-                        )
-                elif decision.action is Action.SHARE:
-                    # Inherit value from share_target (set later in episode
-                    # generator) but mark as a leaf so the tree code stops.
-                    child["leaf"] = True
-                    child["reward"] = float("nan")  # sentinel; replaced later
-                else:  # Action.PRUNE
-                    child["leaf"] = True
-                    child["reward"] = float("nan")  # sentinel; replaced later
 
             for child, task in probe_tasks:
                 try:
@@ -917,16 +716,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             branch_factor_by_depth=branch_factor_by_depth,
         )
         if stats:
-            stats["ingpo/avg_tv_when_share"] = (
-                engine.stats.avg_tv_share if engine is not None else local_avg_tv_share
-            )
-            stats["ingpo/avg_gap_when_prune"] = (
-                engine.stats.avg_gap_prune
-                if engine is not None
-                else local_avg_gap_prune
-            )
+            stats["ingpo/avg_tv_when_share"] = local_avg_tv_share
+            stats["ingpo/avg_gap_when_prune"] = local_avg_gap_prune
         tree["ingpo_stats"] = stats
-        tree["ingpo_answer_set_size"] = answer_set.m
         tree["ingpo_tree_construction_seconds"] = time.time() - t0_tree
         tree["ingpo_problem_id"] = problem_id
         return tree
@@ -1334,7 +1126,6 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         tree["ingpo_budget_overhead_mode"] = self.ingpo_budget_overhead_mode
         tree["ingpo_skip_near_leaf_expand"] = self.ingpo_skip_near_leaf_expand
         tree["ingpo_root_allocation"] = self.ingpo_root_allocation
-        tree["ingpo_answer_set_size"] = 0
         tree_construction_seconds = time.time() - t0_tree
         tree["tree_construction_seconds"] = tree_construction_seconds
         tree["ingpo_tree_construction_seconds"] = tree_construction_seconds
@@ -1353,17 +1144,3 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             "ingpo/expansion_seconds": float(sum(expansion_seconds_by_depth.values())),
         }
         return tree
-
-    @staticmethod
-    def _annotate_node(child: Node, decision) -> None:
-        child["ingpo_action"] = decision.action.value
-        child["ingpo_share_target"] = decision.share_target
-        child["ingpo_avg_lp_K"] = decision.avg_lp_K
-        if decision.avg_lp_m is not None:
-            child["ingpo_avg_lp_m"] = decision.avg_lp_m
-        if decision.tv_m is not None:
-            child["ingpo_tv_m"] = decision.tv_m
-        if decision.avg_lp_diff_to_pa_m is not None:
-            child["ingpo_gap_m"] = decision.avg_lp_diff_to_pa_m
-        child["ingpo_eta"] = decision.eta_used
-        child["ingpo_tau"] = decision.tau_used

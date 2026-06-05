@@ -7,7 +7,6 @@ configs with ``type: 'ingpo'`` resolve automatically.
 """
 
 from treetune.ingpo import (
-    answer_set,
     local_value_share,
     log_prob_matrix,
     logging_helpers,

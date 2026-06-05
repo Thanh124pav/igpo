@@ -409,7 +409,6 @@ def render_md_section(
 def to_jsonl_record(
     tree_idx: int,
     question_id,
-    answer_set_size: int,
     stats: Dict[str, Any],
     per_depth: Dict[str, float],
     demo_rows: Dict[str, List[List[Any]]],
@@ -420,7 +419,6 @@ def to_jsonl_record(
     record: Dict[str, Any] = {
         "tree_idx": tree_idx,
         "question_id": question_id,
-        "answer_set_size": answer_set_size,
         "stats": stats,
         "per_depth": per_depth,
         "demos": {

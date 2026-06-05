@@ -1,7 +1,6 @@
 """Sibling-local ValueShare utilities.
 
-The older ValueShare trigger compares full-solution probabilities on a global
-answer set.  This module instead compares local rollout distributions: for two
+This module compares local rollout distributions directly: for two
 sibling nodes x and y, collect rollout continuations generated from both nodes,
 score the same continuation set under both prefixes, normalize with softmax,
 and compute total variation on that sampled support.

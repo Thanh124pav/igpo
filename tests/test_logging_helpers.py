@@ -209,7 +209,6 @@ def test_to_jsonl_record_roundtrip():
     record = to_jsonl_record(
         tree_idx=11,
         question_id="q-7",
-        answer_set_size=42,
         stats={"ingpo/share_rate": 0.5},
         per_depth={"ingpo/depth_1/share_rate": 0.5},
         demo_rows=rows,
@@ -218,7 +217,6 @@ def test_to_jsonl_record_roundtrip():
     blob = _json.dumps(record, default=str)
     parsed = _json.loads(blob)
     assert parsed["tree_idx"] == 11
-    assert parsed["answer_set_size"] == 42
     # demo dict has share/prune lists with column-keyed entries.
     assert isinstance(parsed["demos"]["share"], list)
     if parsed["demos"]["share"]:

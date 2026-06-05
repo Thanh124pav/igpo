@@ -44,8 +44,8 @@ def compute_tau(cfg: ThresholdConfig, eta: float) -> float:
 def tv_to_value_bound(tv: float, cfg: ThresholdConfig) -> float:
     """Convert a TV estimate into a conservative value-difference bound.
 
-    Local ValueShare compares sampled rollout distributions rather than the
-    legacy global answer-set distribution.  For that path we need to compare a
+    Local ValueShare compares sampled rollout distributions directly.  For that
+    path we need to compare a
     value bound with ``cfg.epsilon`` instead of comparing raw TV to eta.  The
     simulation-lemma form matches the budget-allocation code path:
 
