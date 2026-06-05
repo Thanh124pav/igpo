@@ -65,6 +65,6 @@ def test_ingpo_defaults_use_budget_allocation_not_share_prune():
     assert "algorithm_mode: 'budget_allocation'" in defaults
     assert "enable_share: false" in defaults
     assert "enable_prune: false" in defaults
-    assert "ingpo_algorithm_mode: $.ingpo.algorithm_mode" in overlay
-    assert "ingpo_tv_estimator: $.ingpo.tv_estimator" in overlay
+    assert "ingpo_algorithm_mode: ingpo_cfg.algorithm_mode" in overlay
+    assert "ingpo_tv_estimator: ingpo_cfg.tv_estimator" in overlay
     assert "store_logprobs: true" in overlay

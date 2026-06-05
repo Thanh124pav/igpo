@@ -44,10 +44,14 @@ def replace_gen_pattern(s, my_repl):
 
 class NodeExpander(Registrable):
     def __init__(
-        self, branch_factor_strategy: BranchFactorStrategy, seed: Optional[int] = None
+        self,
+        branch_factor_strategy: BranchFactorStrategy,
+        seed: Optional[int] = None,
+        store_logprobs: bool = False,
     ):
         self.branch_factor_strategy = branch_factor_strategy
         self.seed = seed
+        self.store_logprobs = bool(store_logprobs)
         self._run_program = gu.run_program
 
     def set_run_program(self, run_program):
@@ -67,7 +71,9 @@ class IIDExpander(NodeExpander):
     ):
         super().__init__(**kwargs)
 
-        if "logprobs" not in program_kwargs:
+        if self.store_logprobs:
+            program_kwargs["logprobs"] = 1
+        elif "logprobs" not in program_kwargs:
             program_kwargs["logprobs"] = 0
         else:
             assert program_kwargs["logprobs"] in [0, 1], "logprobs must be 0 or 1"
@@ -280,11 +286,14 @@ class EfficientIIDExpander(NodeExpander):
         # else:
         #     assert program_kwargs["logprobs"] in [0, 1], "logprobs must be 0 or 1"
 
-        # For simplicity, we just always set logprobs to 1
-        if "logprobs" not in program_kwargs:
+        # InGPO budget allocation needs generation logprobs to rank reusable
+        # TV-probe candidates and to account for consumed first-phase tokens.
+        # Keep the historical default off unless the config explicitly asks the
+        # node expander to store them.
+        if self.store_logprobs:
+            program_kwargs["logprobs"] = 1
+        elif "logprobs" not in program_kwargs:
             program_kwargs["logprobs"] = 0
-
-        program_kwargs["logprobs"] = 0
 
         # else:
         #     assert program_kwargs["logprobs"] == 1, "logprobs must be 1"
@@ -325,6 +334,16 @@ class EfficientIIDExpander(NodeExpander):
         max_tokens: Optional[int] = None,
         seed: Optional[int] = None,
     ) -> List[Node]:
+        if branch_factor <= 0:
+            return []
+        if max_tokens is not None and int(max_tokens) <= 0:
+            logger.warning(
+                "Skipping expansion because max_tokens=%s at depth=%s. prefix_tokens may have exhausted the context window.",
+                max_tokens,
+                depth,
+            )
+            return []
+
         program_kwargs = self.program_kwargs.copy()
 
         # We should respect the max_tokens passed
@@ -345,7 +364,13 @@ class EfficientIIDExpander(NodeExpander):
                 logger.warning(
                     f"Overriding max_tokens: {program_kwargs.get('max_tokens')} -> {new_max_tokens}"
                 )
-            assert new_max_tokens > 0, f"new_max_tokens: {new_max_tokens}"
+            if new_max_tokens <= 0:
+                logger.warning(
+                    "Skipping expansion because computed max_tokens=%s at depth=%s. prefix_tokens may have exhausted the context window.",
+                    new_max_tokens,
+                    depth,
+                )
+                return []
             program_kwargs["max_tokens"] = new_max_tokens
 
         program_kwargs["num_samples"] = branch_factor
@@ -384,9 +409,32 @@ class EfficientIIDExpander(NodeExpander):
             # logprobs = [logprobs]
             # tokens = [tokens]
 
+        generated_logprobs = variables.get("chain_of_thought_logprobs")
+        if self.store_logprobs and generated_logprobs is not None:
+            if branch_factor == 1 and (
+                not generated_logprobs
+                or isinstance(generated_logprobs[0], (int, float))
+            ):
+                generated_logprobs = [generated_logprobs]
+            if (
+                not isinstance(generated_logprobs, list)
+                or len(generated_logprobs) != len(generated_chain_of_thoughts)
+                or any(
+                    item is not None and not isinstance(item, list)
+                    for item in generated_logprobs
+                )
+            ):
+                logger.warning(
+                    "Ignoring malformed chain_of_thought_logprobs at depth=%s.",
+                    depth,
+                )
+                generated_logprobs = [None] * len(generated_chain_of_thoughts)
+        else:
+            generated_logprobs = [None] * len(generated_chain_of_thoughts)
+
         nodes = []
-        for chain_of_thought, finish_reason in zip(
-            generated_chain_of_thoughts, finish_reasons
+        for chain_of_thought, finish_reason, logprobs in zip(
+            generated_chain_of_thoughts, finish_reasons, generated_logprobs
         ):
             node_text = self.node_text_template.format(
                 chain_of_thought=chain_of_thought
@@ -404,6 +452,9 @@ class EfficientIIDExpander(NodeExpander):
                 # "logprob": logprob,
                 # "tokens": token
             }
+            if logprobs is not None:
+                node["sum_logprobs"] = float(sum(logprobs))
+                node["num_tokens"] = len(logprobs)
             nodes.append(node)
 
         return nodes

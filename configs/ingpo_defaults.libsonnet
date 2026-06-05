@@ -34,7 +34,7 @@
     n_tv_estimates: 8,
     tv_subnode_max_tokens: 120,
     tv_second_phase_tokens: 60,
-    tv_includes_half_factor: false,
+    tv_includes_half_factor: true,
     budget_lambda: 0.02,
     budget_overhead_mode: 'flexible',
     budget_queue_count: 2,
