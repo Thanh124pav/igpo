@@ -37,6 +37,7 @@ logger = get_logger(__name__)
 
 
 from treetune.ingpo.logging_helpers import (
+    BUDGET_DEMO_COLUMNS,
     DEMO_COLUMNS,
     collect_demo_rows,
     per_depth_action_counts,
@@ -55,7 +56,9 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         ingpo_emit_pruned_edges: bool = False,
         ingpo_share_inherit: str = "value_and_reward",  # or "value_only"
         ingpo_demo_examples_per_tree: int = 2,  # how many SHARE / PRUNE demos to log per tree
-        ingpo_demos_dir: Optional[str] = None,  # absolute path; else exp_root/ingpo_demos
+        ingpo_demos_dir: Optional[
+            str
+        ] = None,  # absolute path; else exp_root/ingpo_demos
         ingpo_log_demos_to_wandb: bool = False,  # for offline servers, default off
         ingpo_log_reward_variance_nodes: bool = False,
         **kwargs,
@@ -123,23 +126,28 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
             stats=ingpo_stats,
             per_depth=per_depth,
             demo_rows=demo_rows,
-            answer_set_size=tree_copy.get("ingpo_answer_set_size", 0),
-            tree_construction_seconds=tree_copy.get("ingpo_tree_construction_seconds"),
+            tree_construction_seconds=tree_copy.get(
+                "tree_construction_seconds",
+                tree_copy.get("ingpo_tree_construction_seconds"),
+            ),
         )
 
         # ---- Optional wandb scalar+table logging --------------------------
         if ingpo_stats or per_depth:
-            reward_variance_summary = self._summarize_reward_variance_nodes(
-                tree_copy
-            )
+            reward_variance_summary = self._summarize_reward_variance_nodes(tree_copy)
             log_entry = {
                 **ingpo_stats,
-                "ingpo/answer_set_size": tree_copy.get("ingpo_answer_set_size", 0),
                 "ingpo/tree_idx": self._tree_seen,
                 **reward_variance_summary,
                 **per_depth,
-                "ingpo/n_share_demos_in_tree": len(demo_rows["share"]),
-                "ingpo/n_prune_demos_in_tree": len(demo_rows["prune"]),
+                **(
+                    {"ingpo/n_budget_demos_in_tree": len(demo_rows.get("budget", []))}
+                    if tree_copy.get("ingpo_algorithm_mode") == "budget_allocation"
+                    else {
+                        "ingpo/n_share_demos_in_tree": len(demo_rows.get("share", [])),
+                        "ingpo/n_prune_demos_in_tree": len(demo_rows.get("prune", [])),
+                    }
+                ),
             }
             if self.ingpo_log_demos_to_wandb:
                 table = self._maybe_build_wandb_table(demo_rows)
@@ -166,7 +174,9 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
                     target_id = node.get("ingpo_share_target")
                     if target_id is not None and target_id in index_by_seg_id:
                         target_r = index_by_seg_id[target_id].get("reward")
-                        if target_r is not None and not (isinstance(target_r, float) and np.isnan(target_r)):
+                        if target_r is not None and not (
+                            isinstance(target_r, float) and np.isnan(target_r)
+                        ):
                             return float(target_r)
                     return float(fallback_parent_reward)
                 if action == "prune":
@@ -175,7 +185,9 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
                         key = str(node.get("ingpo_segment_id", node.get("text", "")))
                         digest = hashlib.sha256(key.encode("utf-8")).digest()
                         u = int.from_bytes(digest[:8], "big") / float(2**64 - 1)
-                        return float(fallback_parent_reward) + (2.0 * u - 1.0) * float(eps)
+                        return float(fallback_parent_reward) + (2.0 * u - 1.0) * float(
+                            eps
+                        )
                     return float(fallback_parent_reward)
                 return None
             return float(r)
@@ -204,9 +216,13 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
                         if adv_method == "rloo":
                             advantage = child_reward - parent_reward
                         elif adv_method == "grpo":
-                            advantage = (child_reward - parent_reward) / (parent_reward_std + 1e-8)
+                            advantage = (child_reward - parent_reward) / (
+                                parent_reward_std + 1e-8
+                            )
                         else:
-                            raise ValueError(f"adv_method {adv_method} is not supported")
+                            raise ValueError(
+                                f"adv_method {adv_method} is not supported"
+                            )
 
                         if is_pruned and self.ingpo_zero_advantage_when_pruned:
                             advantage = 0.0
@@ -215,7 +231,11 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
                         pav_advantage = advantage + prover_advantage
 
                         keep = True
-                        if only_adv_greater_than_zero and pav_advantage == 0 and not is_pruned:
+                        if (
+                            only_adv_greater_than_zero
+                            and pav_advantage == 0
+                            and not is_pruned
+                        ):
                             keep = False
 
                         if keep and len(response_text) > 0:
@@ -231,7 +251,9 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
                                     "leaf": leaf,
                                     "reward": child_reward,
                                     "ingpo_action": ingpo_action,
-                                    "ingpo_share_target": node.get("ingpo_share_target"),
+                                    "ingpo_share_target": node.get(
+                                        "ingpo_share_target"
+                                    ),
                                     "ingpo_tv_m": node.get("ingpo_tv_m"),
                                     "ingpo_gap_m": node.get("ingpo_gap_m"),
                                 }
@@ -256,14 +278,21 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         return per_depth_action_counts(tree)
 
     def _maybe_build_wandb_table(self, demo_rows):
-        if not (demo_rows["share"] or demo_rows["prune"]):
+        budget_rows = demo_rows.get("budget", [])
+        share_prune_rows = demo_rows.get("share", []) + demo_rows.get("prune", [])
+        if not (budget_rows or share_prune_rows):
             return None
         try:
             import wandb  # type: ignore
         except ImportError:
             return None
+        if budget_rows:
+            table = wandb.Table(columns=BUDGET_DEMO_COLUMNS)
+            for r in budget_rows:
+                table.add_data(*r)
+            return table
         table = wandb.Table(columns=DEMO_COLUMNS)
-        for r in demo_rows["share"] + demo_rows["prune"]:
+        for r in share_prune_rows:
             table.add_data(*r)
         return table
 
@@ -473,7 +502,6 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         stats: Dict[str, Any],
         per_depth: Dict[str, float],
         demo_rows: Dict[str, List[List[Any]]],
-        answer_set_size: int,
         tree_construction_seconds: Optional[float] = None,
     ) -> None:
         if max(self.ingpo_demo_examples_per_tree, 0) == 0 and not stats:
@@ -487,7 +515,6 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
         record = to_jsonl_record(
             tree_idx=tree_idx,
             question_id=question_id,
-            answer_set_size=answer_set_size,
             stats=stats,
             per_depth=per_depth,
             demo_rows=demo_rows,
@@ -500,7 +527,9 @@ class InGPOEpisodeGenerator(HybridEpisodeGenerator):
 
         # Markdown: human-readable. One section per tree, only if there's
         # something interesting (rates or demos) to show.
-        if not (demo_rows["share"] or demo_rows["prune"]):
+        if not (
+            demo_rows.get("share") or demo_rows.get("prune") or demo_rows.get("budget")
+        ):
             return
         try:
             md.write(render_md_section(tree_idx, question_id, stats, demo_rows))

@@ -78,7 +78,6 @@ def main() -> int:
             "prune_rate": stats.get("ingpo/prune_rate", 0.0),
             "avg_tv_share": stats.get("ingpo/avg_tv_when_share", 0.0),
             "avg_gap_prune": stats.get("ingpo/avg_gap_when_prune", 0.0),
-            "answer_set_size": tree.get("ingpo_answer_set_size", 0) if isinstance(tree, dict) else 0,
         })
 
     if not rows:

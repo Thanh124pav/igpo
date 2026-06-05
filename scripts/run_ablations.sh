@@ -5,7 +5,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 TREE="${TREE:-${INGPO_TREE:-666}}"
-ABLATIONS="${ABLATIONS:-abl1 abl2 abl3 abl4 abl5 abl6 abl7}"
+ABLATIONS="${ABLATIONS:-abl1 abl2 abl3 abl4 abl6 abl7}"
 
 BASE_CFG="${INGPO_ROOT}/configs/polIter_qwen1_5b_base_ingpo_tree_MATH.jsonnet"
 TREE_CFG="$(ensure_tree_config "${TREE}")"
@@ -38,9 +38,6 @@ for abl in ${ABLATIONS}; do
       run "abl4-share-only"  "${INGPO_ROOT}/configs/ablations/abl4_share_only.jsonnet"
       run "abl4-prune-only"  "${INGPO_ROOT}/configs/ablations/abl4_prune_only.jsonnet"
       run "abl4-neither"     "${INGPO_ROOT}/configs/ablations/abl4_neither.jsonnet"
-      ;;
-    abl5)
-      run "abl5-y-per-dataset" "${INGPO_ROOT}/configs/ablations/abl5_y_per_dataset.jsonnet"
       ;;
     abl6)
       run "abl6-no-dkw" "${INGPO_ROOT}/configs/ablations/abl6_logp_vs_prob.jsonnet"

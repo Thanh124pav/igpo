@@ -6,17 +6,41 @@ the full SPO Python stack.
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
+from statistics import pstdev
 from typing import Any, Dict, List, Optional
-
 
 _DEMO_TEXT_TRUNC = 240
 
 
 DEMO_COLUMNS = [
-    "question_id", "action", "depth", "seg_id",
-    "parent_text", "child_text", "target_text", "target_seg_id",
-    "avg_lp_K", "tv_m", "gap_m", "eta", "tau",
+    "question_id",
+    "action",
+    "depth",
+    "seg_id",
+    "parent_text",
+    "child_text",
+    "target_text",
+    "target_seg_id",
+    "avg_lp_K",
+    "tv_m",
+    "gap_m",
+    "eta",
+    "tau",
+]
+
+BUDGET_DEMO_COLUMNS = [
+    "question_id",
+    "action",
+    "depth",
+    "seg_id",
+    "parent_text",
+    "node_text",
+    "budget_weight",
+    "reward_variance",
+    "allocated_branch_factor",
+    "built_children",
+    "discarded_candidates",
 ]
 
 
@@ -27,13 +51,74 @@ def truncate(s: Optional[str], n: int = _DEMO_TEXT_TRUNC) -> str:
     return s if len(s) <= n else s[: n - 3] + "..."
 
 
-def aggregate_tree_stats(tree) -> Dict[str, float]:
-    """Walk the final tree once and aggregate action counts into the same
-    ``ingpo/...`` keys used by ``TriggerEngine.stats.as_dict()``.  This is the
-    single source of truth: by sharing the tree walk with
-    ``per_depth_action_counts`` we guarantee aggregate rates stay consistent
-    with the per-depth breakdown.
+def _node_depth(node) -> Optional[int]:
+    depth = node.get("ingpo_depth", node.get("depth"))
+    try:
+        return int(depth)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_budget_allocation_tree(tree) -> bool:
+    return tree.get("ingpo_algorithm_mode") == "budget_allocation"
+
+
+def aggregate_tree_stats(
+    tree,
+    max_depth: Optional[int] = None,
+    branch_factor_by_depth: Optional[Dict[int, int]] = None,
+) -> Dict[str, float]:
+    """Aggregate tree-level InGPO logging metrics.
+
+    Budget-allocation runs intentionally do not emit legacy SHARE/PRUNE rates.
+    They report how many child nodes were actually built against the node budget
+    assigned by the SPO-style branch-factor schedule.
     """
+
+    if _is_budget_allocation_tree(tree):
+        built_nodes = 0
+        allocated_budget = 0
+        requested_budget = 0
+        expandable_parent_nodes = 0
+        stack = [tree]
+        while stack:
+            node = stack.pop()
+            children = node.get("children") or []
+            allocated = node.get("ingpo_allocated_branch_factor")
+            if allocated is not None:
+                expandable_parent_nodes += 1
+                allocated_budget += int(allocated)
+                built_nodes += len(children)
+                depth = _node_depth(node)
+                if branch_factor_by_depth is not None and depth is not None:
+                    requested_budget += int(branch_factor_by_depth.get(depth, 0))
+            stack.extend(children)
+
+        if requested_budget == 0:
+            requested_by_depth = tree.get("ingpo_requested_node_budget_by_depth") or {}
+            requested_budget = sum(int(v) for v in requested_by_depth.values())
+        if allocated_budget == 0:
+            allocated_budget = int(
+                sum((tree.get("ingpo_allocated_branch_factor_by_depth") or {}).values())
+            )
+        if built_nodes == 0:
+            built_nodes = int(
+                sum((tree.get("ingpo_built_nodes_by_depth") or {}).values())
+            )
+
+        out: Dict[str, float] = {
+            "ingpo/budget/built_nodes": float(built_nodes),
+            "ingpo/budget/allocated_node_budget": float(allocated_budget),
+            "ingpo/budget/requested_node_budget": float(requested_budget),
+            "ingpo/budget/expandable_parent_nodes": float(expandable_parent_nodes),
+        }
+        out["ingpo/budget/built_to_allocated_ratio"] = (
+            float(built_nodes) / allocated_budget if allocated_budget > 0 else 0.0
+        )
+        out["ingpo/budget/built_to_requested_ratio"] = (
+            float(built_nodes) / requested_budget if requested_budget > 0 else 0.0
+        )
+        return out
 
     counts: Counter = Counter()
     stack = [tree]
@@ -60,9 +145,66 @@ def aggregate_tree_stats(tree) -> Dict[str, float]:
 
 
 def per_depth_action_counts(tree) -> Dict[str, float]:
-    """Walk the tree and return per-depth share/prune/expand counts and
-    rates as a flat dict of wandb-friendly metric names.
+    """Return per-depth InGPO metrics.
+
+    Budget-allocation runs log SPO-compatible budget utilization by expansion
+    depth: std of allocated branch factors across parent nodes, built child
+    nodes, and built/budget ratios.  Legacy SHARE/PRUNE counts are emitted only
+    for share-prune mode.
     """
+
+    if _is_budget_allocation_tree(tree):
+        branch_factors_by_depth: Dict[int, List[int]] = defaultdict(list)
+        built_by_depth: Counter = Counter()
+        allocated_by_depth: Counter = Counter()
+        requested_by_depth = {
+            int(k): int(v)
+            for k, v in (tree.get("ingpo_requested_node_budget_by_depth") or {}).items()
+        }
+        parent_count_by_depth: Counter = Counter()
+
+        stack = [tree]
+        while stack:
+            node = stack.pop()
+            children = node.get("children") or []
+            allocated = node.get("ingpo_allocated_branch_factor")
+            depth = _node_depth(node)
+            if allocated is not None and depth is not None:
+                allocated_int = int(allocated)
+                branch_factors_by_depth[depth].append(allocated_int)
+                allocated_by_depth[depth] += allocated_int
+                built_by_depth[depth] += len(children)
+                parent_count_by_depth[depth] += 1
+            stack.extend(children)
+
+        out: Dict[str, float] = {}
+        depths = sorted(
+            set(branch_factors_by_depth)
+            | set(requested_by_depth)
+            | set(allocated_by_depth)
+            | set(built_by_depth)
+        )
+        for depth in depths:
+            branch_factors = branch_factors_by_depth.get(depth, [])
+            allocated = int(allocated_by_depth.get(depth, 0))
+            requested = int(requested_by_depth.get(depth, 0))
+            built = int(built_by_depth.get(depth, 0))
+            out[f"ingpo/depth_{depth}/budget_parent_nodes"] = int(
+                parent_count_by_depth.get(depth, 0)
+            )
+            out[f"ingpo/depth_{depth}/allocated_branch_factor_std"] = (
+                float(pstdev(branch_factors)) if len(branch_factors) > 1 else 0.0
+            )
+            out[f"ingpo/depth_{depth}/built_nodes"] = built
+            out[f"ingpo/depth_{depth}/allocated_node_budget"] = allocated
+            out[f"ingpo/depth_{depth}/requested_node_budget"] = requested
+            out[f"ingpo/depth_{depth}/built_to_allocated_ratio"] = (
+                built / allocated if allocated > 0 else 0.0
+            )
+            out[f"ingpo/depth_{depth}/built_to_requested_ratio"] = (
+                built / requested if requested > 0 else 0.0
+            )
+        return out
 
     per_depth_count: Dict[int, Counter] = {}
     stack = [tree]
@@ -98,6 +240,44 @@ def collect_demo_rows(
     list of column-aligned cells matching `DEMO_COLUMNS`.
     """
 
+    if _is_budget_allocation_tree(tree):
+        budget_rows: List[List[Any]] = []
+        stack = [tree]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.get("children") or [])
+            allocated = n.get("ingpo_allocated_branch_factor")
+            if allocated is None:
+                continue
+            depth = _node_depth(n)
+            budget_rows.append(
+                [
+                    str(question_id),
+                    "budget",
+                    depth if depth is not None else "",
+                    str(n.get("ingpo_segment_id", "")),
+                    truncate(
+                        index_by_seg_id.get(n.get("ingpo_parent_segment_id"), {}).get(
+                            "text"
+                        )
+                        or index_by_seg_id.get(
+                            n.get("ingpo_parent_segment_id"), {}
+                        ).get("full_text")
+                    ),
+                    truncate(n.get("text") or n.get("full_text")),
+                    float(n.get("ingpo_budget_weight") or 0.0),
+                    (
+                        float(n.get("ingpo_reward_variance") or 0.0)
+                        if n.get("ingpo_reward_variance") is not None
+                        else None
+                    ),
+                    int(allocated),
+                    len(n.get("children") or []),
+                    int(n.get("ingpo_discarded_budget_candidates") or 0),
+                ]
+            )
+        return {"share": [], "prune": [], "budget": budget_rows[:n_each]}
+
     prune_rows: List[List[Any]] = []
     share_rows: List[List[Any]] = []
 
@@ -123,11 +303,23 @@ def collect_demo_rows(
             str(seg_id),
             truncate(parent.get("text") or parent.get("full_text")),
             truncate(n.get("text") or n.get("full_text")),
-            truncate(target.get("text") or target.get("full_text")) if target_id else "",
+            (
+                truncate(target.get("text") or target.get("full_text"))
+                if target_id
+                else ""
+            ),
             str(target_id or ""),
             float(n.get("ingpo_avg_lp_K") or 0.0),
-            float(n.get("ingpo_tv_m") or 0.0) if n.get("ingpo_tv_m") is not None else None,
-            float(n.get("ingpo_gap_m") or 0.0) if n.get("ingpo_gap_m") is not None else None,
+            (
+                float(n.get("ingpo_tv_m") or 0.0)
+                if n.get("ingpo_tv_m") is not None
+                else None
+            ),
+            (
+                float(n.get("ingpo_gap_m") or 0.0)
+                if n.get("ingpo_gap_m") is not None
+                else None
+            ),
             float(n.get("ingpo_eta") or 0.0),
             float(n.get("ingpo_tau") or 0.0),
         ]
@@ -136,11 +328,12 @@ def collect_demo_rows(
     return {
         "share": share_rows[:n_each],
         "prune": prune_rows[:n_each],
+        "budget": [],
     }
 
 
-def row_to_dict(row: List[Any]) -> Dict[str, Any]:
-    return dict(zip(DEMO_COLUMNS, row))
+def row_to_dict(row: List[Any], columns: Optional[List[str]] = None) -> Dict[str, Any]:
+    return dict(zip(columns or DEMO_COLUMNS, row))
 
 
 def render_md_section(
@@ -152,7 +345,16 @@ def render_md_section(
     """One Markdown section for one tree, ready to append to demos.md."""
 
     out = [f"## Tree #{tree_idx}  (question_id={question_id})\n"]
-    if stats:
+    budget_rows = demo_rows.get("budget", [])
+    if stats and "ingpo/budget/built_nodes" in stats:
+        built = float(stats.get("ingpo/budget/built_nodes", 0.0) or 0.0)
+        allocated = float(stats.get("ingpo/budget/allocated_node_budget", 0.0) or 0.0)
+        requested = float(stats.get("ingpo/budget/requested_node_budget", 0.0) or 0.0)
+        out.append(
+            f"- budget built_nodes: **{built:.0f}** / allocated_node_budget: **{allocated:.0f}** "
+            f"(requested_node_budget={requested:.0f})\n"
+        )
+    elif stats:
         share_rate = float(stats.get("ingpo/share_rate", 0.0) or 0.0)
         prune_rate = float(stats.get("ingpo/prune_rate", 0.0) or 0.0)
         out.append(
@@ -161,6 +363,21 @@ def render_md_section(
             f"#pruned={stats.get('ingpo/pruned_count', 0)}, "
             f"#expanded={stats.get('ingpo/expanded_count', 0)}\n"
         )
+
+    if budget_rows:
+        out.append("### Budget allocation demos\n")
+        for row in budget_rows:
+            d = row_to_dict(row, BUDGET_DEMO_COLUMNS)
+            out.append(
+                f"- depth={d['depth']}  seg={d['seg_id']}  "
+                f"weight={float(d['budget_weight']):.4f}  "
+                f"sigma2={float(d['reward_variance'] or 0.0):.4f}  "
+                f"allocated={int(d['allocated_branch_factor'])}  "
+                f"built={int(d['built_children'])}  "
+                f"discarded={int(d['discarded_candidates'])}\n"
+            )
+            out.append(f"  - node : `{d['node_text']}`\n")
+        out.append("\n")
 
     for label, rows in (("SHARE", demo_rows["share"]), ("PRUNE", demo_rows["prune"])):
         if not rows:
@@ -192,7 +409,6 @@ def render_md_section(
 def to_jsonl_record(
     tree_idx: int,
     question_id,
-    answer_set_size: int,
     stats: Dict[str, Any],
     per_depth: Dict[str, float],
     demo_rows: Dict[str, List[List[Any]]],
@@ -203,12 +419,14 @@ def to_jsonl_record(
     record: Dict[str, Any] = {
         "tree_idx": tree_idx,
         "question_id": question_id,
-        "answer_set_size": answer_set_size,
         "stats": stats,
         "per_depth": per_depth,
         "demos": {
-            "share": [row_to_dict(r) for r in demo_rows["share"]],
-            "prune": [row_to_dict(r) for r in demo_rows["prune"]],
+            "share": [row_to_dict(r) for r in demo_rows.get("share", [])],
+            "prune": [row_to_dict(r) for r in demo_rows.get("prune", [])],
+            "budget": [
+                row_to_dict(r, BUDGET_DEMO_COLUMNS) for r in demo_rows.get("budget", [])
+            ],
         },
     }
     if tree_construction_seconds is not None:

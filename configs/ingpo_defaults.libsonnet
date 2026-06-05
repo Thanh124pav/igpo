@@ -23,11 +23,6 @@
     share_pair_budget_fraction: 0.25,  // roughly (W/2)^2 sibling pairs
     share_use_confidence: false,
 
-    // Y generation
-    y_temperature: 0.7,
-    y_max_tokens: 512,
-    y_field: 'answer',
-
     // Tail-fill concurrency to vLLM /completions
     score_concurrency: 64,
 
@@ -44,6 +39,14 @@
     budget_overhead_mode: 'flexible',
     budget_queue_count: 2,
     budget_queue_timeout_seconds: 0.5,
+    // When true, skip TV/budget allocation at the final expansion depth and
+    // use uniform SPO-style branch factor B instead. This avoids near-leaf
+    // context exhaustion from TV probe continuations.
+    skip_near_leaf_expand: false,
+    // When true, estimate root reward variance for every problem in the
+    // current minibatch and allocate the depth-0 branch budget across those
+    // roots before constructing each individual tree.
+    root_allocation: false,
 
     // Edge handling
     zero_advantage_when_pruned: true,

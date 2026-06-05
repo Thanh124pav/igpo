@@ -16,10 +16,11 @@ from typing import Optional
 
 @dataclass
 class ThresholdConfig:
-    epsilon: float = 0.02      # acceptable value error
-    r_max: float = 1.0         # max reward magnitude
-    alpha: float = 0.05        # DKW confidence level
-    K: int = 10                # fast subset size
+    epsilon: float = 0.02  # acceptable value error
+    r_max: float = 1.0  # max reward magnitude
+    gamma: float = 0.5  # discount/simulation-lemma factor for TV->value bounds
+    alpha: float = 0.05  # DKW confidence level
+    K: int = 10  # fast subset size
     use_dkw: bool = True
     eta_override: Optional[float] = None  # for ablation: bypass Lemma 2.4
 
@@ -38,3 +39,24 @@ def compute_tau(cfg: ThresholdConfig, eta: float) -> float:
         return eta
     band = math.sqrt(math.log(2.0 / cfg.alpha) / (2.0 * max(cfg.K, 1)))
     return eta + band
+
+
+def tv_to_value_bound(tv: float, cfg: ThresholdConfig) -> float:
+    """Convert a TV estimate into a conservative value-difference bound.
+
+    Local ValueShare compares sampled rollout distributions directly.  For that
+    path we need to compare a
+    value bound with ``cfg.epsilon`` instead of comparing raw TV to eta.  The
+    simulation-lemma form matches the budget-allocation code path:
+
+        gamma * TV / ((1 - gamma) * (1 - gamma + TV))
+
+    and ``r_max`` scales the bound to the configured reward range.
+    """
+
+    gamma = min(max(float(cfg.gamma), 0.0), 1.0 - 1e-8)
+    tv = max(float(tv), 0.0)
+    denom = (1.0 - gamma) * (1.0 - gamma + tv)
+    if denom <= 0.0 or not math.isfinite(denom):
+        return float("inf")
+    return max(float(cfg.r_max), 0.0) * gamma * tv / denom

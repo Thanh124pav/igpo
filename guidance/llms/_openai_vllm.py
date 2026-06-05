@@ -526,6 +526,7 @@ class OpenAIVLLM(LLM):
 
         # Send a POST request and get the response
         # An exception for timeout is raised if the server has not issued a response for 10 seconds
+        session = None
         try:
             if stream:
                 session = aiohttp.ClientSession()
@@ -549,8 +550,10 @@ class OpenAIVLLM(LLM):
                 response = response.json()
         except requests.Timeout:
             raise Exception("Request timed out.")
-        except requests.ConnectionError:
-            raise Exception("Connection error occurred.")
+        except requests.ConnectionError as exc:
+            raise Exception(
+                f"Connection error occurred for endpoint={self.endpoint!r}."
+            ) from exc
         finally:
             if session:
                 await session.close()
@@ -877,7 +880,12 @@ class OpenAISession(LLMSession):
                     OpenAITimeout,
                     OpenAIAPIConnectionError,
                 ) as exp:
-                    print(exp)
+                    print(
+                        "OpenAI/vLLM API error "
+                        f"(api_base={self.llm.api_base!r}, endpoint={self.llm.endpoint!r}, "
+                        f"model={self.llm.model_name!r}, attempt={fail_count + 1}/"
+                        f"{self.llm.max_retries}): {exp!r}"
+                    )
                     await asyncio.sleep(3)
                     try_again = True
                     fail_count += 1

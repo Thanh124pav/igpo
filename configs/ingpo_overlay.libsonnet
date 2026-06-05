@@ -36,9 +36,6 @@
       ingpo_local_value_share: $.ingpo.local_value_share,
       ingpo_share_pair_budget_fraction: $.ingpo.share_pair_budget_fraction,
       ingpo_share_use_confidence: $.ingpo.share_use_confidence,
-      ingpo_y_temperature: $.ingpo.y_temperature,
-      ingpo_y_max_tokens: $.ingpo.y_max_tokens,
-      ingpo_y_field: $.ingpo.y_field,
       ingpo_score_concurrency: $.ingpo.score_concurrency,
       ingpo_algorithm_mode: $.ingpo.algorithm_mode,
       ingpo_tv_estimator: $.ingpo.tv_estimator,
@@ -50,6 +47,8 @@
       ingpo_budget_overhead_mode: $.ingpo.budget_overhead_mode,
       ingpo_budget_queue_count: $.ingpo.budget_queue_count,
       ingpo_budget_queue_timeout_seconds: $.ingpo.budget_queue_timeout_seconds,
+      ingpo_skip_near_leaf_expand: $.ingpo.skip_near_leaf_expand,
+      ingpo_root_allocation: $.ingpo.root_allocation,
     },
 
     ingpo_zero_advantage_when_pruned: $.ingpo.zero_advantage_when_pruned,

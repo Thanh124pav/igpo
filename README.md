@@ -27,7 +27,7 @@ ingpo/
 │   ├── trainers/                     # ppo, dpo_positive, restem, mle, ...
 │   ├── episode_generators/           # tất cả episode generators (PPO/GRPO/DPO/RestEM/VinePPO/SPO/InGPO)
 │   ├── inference_strategies/         # cot, hybrid, ingpo, ...
-│   ├── ingpo/                        # InGPO core helpers (TV bound, answer set, triggers)
+│   ├── ingpo/                        # InGPO core helpers (TV bound, budget allocation, local gates)
 │   ├── runtime/                      # policy iteration runtime
 │   ├── models/, tasks/, analyzers/   # SPO infrastructure
 │   └── main.py                       # entry point (treetune.main)
@@ -107,23 +107,20 @@ Mỗi config experiment ghép từ các lớp overlay:
 
 ## InGPO — chi tiết thuật toán
 
-InGPO mở rộng SPO-tree với hai cơ chế gated bằng Total Variation bound:
+InGPO hiện dùng `budget_allocation`: TV probes estimate reward variance cho frontier nodes, rồi phân bổ branch budget theo variance.
 
-1. **ValueShare**: phát hiện các segment có log-prob distribution gần giống một segment đã đánh giá → chia sẻ value, không tính lại.
-2. **Prune**: phát hiện các segment không thể tăng value so với parent hơn ε → loại khỏi cây search.
-
-Cả hai trigger được kích hoạt khi TV bound (Total Variation distance trên K logprobs) thoả ngưỡng η.
+Các path SHARE/PRUNE còn lại chỉ dùng sibling-local TV comparison; code generate lời giải tham chiếu cũ đã bị loại khỏi production path.
 
 Tham số mặc định (`configs/ingpo_defaults.libsonnet`):
 
 | Tham số | Default | Ý nghĩa |
 |---------|---------|---------|
-| `K` | 10 | Số mẫu logprobs để estimate AvgLP |
-| `m` | 100 | Số mẫu trong answer-set Y |
+| `m` | 100 | Số continuation anchors tối đa cho sibling-local TV |
 | `epsilon` | 0.02 | Ngưỡng value gap cho Prune |
-| `share_target` | `nearest` | Target để share value (`nearest`/`parent`/`root`) |
-| `local_value_share` | true | Path local (so sánh siblings) hay global (qua Y) |
-| `demo_examples_per_tree` | 2 | Số SHARE/PRUNE demo lưu mỗi cây |
+| `local_value_share` | true | Chỉ dùng path local so sánh siblings; global Y path đã bị loại bỏ |
+| `demo_examples_per_tree` | 2 | Số demo budget/local gate lưu mỗi cây |
+| `skip_near_leaf_expand` | false | Budget allocation: ở depth cuối, bỏ TV/budget allocation và expand uniform theo branch factor B |
+| `root_allocation` | false | Budget allocation: estimate variance ở các root trong minibatch và phân bổ branch budget depth 0 giữa các root đó |
 
 Override trong file `.jsonnet`:
 
@@ -138,7 +135,7 @@ Ablations & sweep nằm trong `configs/ablations/`, `configs/baselines/`, `confi
 InGPO ghi mọi metric ra file để dùng offline:
 
 - `<exp>/training_timing.jsonl` — mỗi iteration 1 dòng: `train_total_seconds` (không gồm eval), `eval_seconds`, cumulative wall.
-- `<exp>/ingpo_demos/demos.jsonl` — mỗi tree: stats, per_depth, tree_construction_seconds, SHARE/PRUNE demos.
+- `<exp>/ingpo_demos/demos.jsonl` — mỗi tree: stats, per_depth, tree_construction_seconds, budget/local-gate demos.
 - `<exp>/ingpo_demos/demos.md` — bản Markdown human-readable.
 
 Xem live:
