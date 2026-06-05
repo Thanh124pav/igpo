@@ -97,10 +97,33 @@ class VLLMLogprobClient:
         await self._ensure_async_resources()
         assert self._semaphore is not None
         assert self._client is not None
-        async with self._semaphore:
-            resp = await self._client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        try:
+            async with self._semaphore:
+                resp = await self._client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            if httpx is not None and isinstance(exc, httpx.HTTPStatusError):
+                response_text = exc.response.text[:500]
+                raise RuntimeError(
+                    "vLLM logprob request failed with HTTP "
+                    f"{exc.response.status_code} for url={url!r}, model={self.model!r}: "
+                    f"{response_text}"
+                ) from exc
+            if httpx is not None and isinstance(
+                exc,
+                (
+                    httpx.ConnectError,
+                    httpx.ConnectTimeout,
+                    httpx.ReadTimeout,
+                    httpx.NetworkError,
+                ),
+            ):
+                raise RuntimeError(
+                    f"vLLM logprob connection failed for url={url!r}, "
+                    f"model={self.model!r}: {exc!r}"
+                ) from exc
+            raise
         # vLLM returns choices[0].logprobs.token_logprobs : List[Optional[float]]
         choice = data["choices"][0]
         token_logprobs = choice.get("logprobs", {}).get("token_logprobs") or []

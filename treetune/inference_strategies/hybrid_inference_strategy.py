@@ -37,6 +37,7 @@ class FilterFn(Registrable):
     def __call__(self, example: Dict[str, Any]) -> bool:
         raise NotImplementedError
 
+
 @GuidanceLLM.register("openai", exist_ok=True)
 class OpenAIGuidanceLLM(OpenAI, GuidanceLLM):
     pass
@@ -66,6 +67,7 @@ class KeepNonLastStepsFilterFn(FilterFn):
             return example["gt_value"] == -100
         else:
             raise ValueError("Invalid example format")
+
 
 class RewardFunction(Registrable):
     def get_unfinished_response_penalty(self) -> float:
@@ -139,7 +141,7 @@ class HybridInferenceStrategy(InferenceStrategy):
 
         if self.log_level is not None:
             logger.setLevel(self.log_level)
-        
+
         self.M = M
 
     def generate(self, dataset: Dataset) -> Dataset:
@@ -180,10 +182,14 @@ class HybridInferenceStrategy(InferenceStrategy):
                 try:
                     tr = await self._construct_tree(*args, **kwargs)
                     return tree_idx, tr
-                except:
-                    # If there is an error, we just exit the program
-                    # as soon as possible, otherwise the program will continue
-                    # blocking the semaphore and thus blocking the entire process
+                except Exception as exc:
+                    # If there is an error, log the full traceback before exiting.
+                    # Without this, upstream OpenAI/vLLM connection failures often
+                    # surface only as a generic "Connection error." while tree
+                    # construction terminates silently.
+                    logger.exception(
+                        "Tree construction failed for instance %s: %r", tree_idx, exc
+                    )
                     exit(1)
 
         # Set the guidance LLM
@@ -345,30 +351,30 @@ class HybridInferenceStrategy(InferenceStrategy):
             "full_text": initial_prompt,
             # `stop_text` is not used for the root node,
             # but we set it to some random string Milad said.
-            "stop_text": "aaa", # not used
+            "stop_text": "aaa",  # not used
             # We only store the data instance in the root node
             # to cover the cases where node_expander or answer_extractor
             # needs it
             "_request_object": data_instance,
-            "leaf": False
+            "leaf": False,
         }
 
         async def dfs(node: Node, prefix: str, depth: int) -> None:
             if depth == max_depth:
-                # We have reached the max_depth and we have not finished reasoning, this means that the model output is too long (exceed the model context length) that we have to truncate that 
+                # We have reached the max_depth and we have not finished reasoning, this means that the model output is too long (exceed the model context length) that we have to truncate that
                 node["reward"], _ = self.reward_function(
-                    query=prefix,
-                    response=node["text"],
-                    dataset_instance=data_instance
+                    query=prefix, response=node["text"], dataset_instance=data_instance
                 )
                 node["leaf"] = True
                 return
 
-            max_tokens = None if depth == max_depth - 1 else self.M # we segment every M tokens, but for the last step, we let it free
+            max_tokens = (
+                None if depth == max_depth - 1 else self.M
+            )  # we segment every M tokens, but for the last step, we let it free
 
             children = await self.node_expander.expand(
-                current_node=node, 
-                prefix=prefix, 
+                current_node=node,
+                prefix=prefix,
                 depth=depth,
                 max_tokens=max_tokens,
             )
@@ -398,8 +404,9 @@ class HybridInferenceStrategy(InferenceStrategy):
                     # This means we have reached the end of the reasoning chain
                     child["reward"], _ = self.reward_function(
                         query=prefix,
-                        response=child["full_text"], # We pass full text here
-                        dataset_instance=data_instance)
+                        response=child["full_text"],  # We pass full text here
+                        dataset_instance=data_instance,
+                    )
                     child["leaf"] = True
                 else:
                     # This means that the model response has been truncated
