@@ -133,6 +133,9 @@ ensure_runtime_config() {
   if [[ -n "${INGPO_SKIP_NEAR_LEAF_EXPAND:-}" ]]; then
     ingpo_inference_overrides+="      ingpo_skip_near_leaf_expand: $(jsonnet_value "${INGPO_SKIP_NEAR_LEAF_EXPAND}"),"$'\n'
   fi
+  if [[ -n "${INGPO_ROOT_ALLOCATION:-}" ]]; then
+    ingpo_inference_overrides+="      ingpo_root_allocation: $(jsonnet_value "${INGPO_ROOT_ALLOCATION}"),"$'\n'
+  fi
 
   mkdir -p "${gen_dir}"
   cat > "${out}" <<EOF

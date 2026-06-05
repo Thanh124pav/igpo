@@ -51,6 +51,7 @@
       ingpo_budget_queue_count: $.ingpo.budget_queue_count,
       ingpo_budget_queue_timeout_seconds: $.ingpo.budget_queue_timeout_seconds,
       ingpo_skip_near_leaf_expand: $.ingpo.skip_near_leaf_expand,
+      ingpo_root_allocation: $.ingpo.root_allocation,
     },
 
     ingpo_zero_advantage_when_pruned: $.ingpo.zero_advantage_when_pruned,

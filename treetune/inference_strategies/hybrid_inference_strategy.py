@@ -222,6 +222,13 @@ class HybridInferenceStrategy(InferenceStrategy):
             f"Filtered out {before_filter_len - len(dataset)} examples from {before_filter_len} examples."
         )
 
+        tree_construction_context = {}
+        prepare_context = getattr(self, "_prepare_tree_construction_context", None)
+        if prepare_context is not None:
+            tree_construction_context = await prepare_context(
+                dataset, question_format_keys
+            )
+
         tasks = []
         trees = {}
         from tqdm import tqdm as tqdm_iter
@@ -251,6 +258,17 @@ class HybridInferenceStrategy(InferenceStrategy):
             format_kwargs = {key: data_instance[key] for key in question_format_keys}
             initial_prompt = self.question_template.format(**format_kwargs)
 
+            get_extra_kwargs = getattr(self, "_get_tree_construction_kwargs", None)
+            extra_tree_kwargs = (
+                get_extra_kwargs(
+                    tree_construction_context,
+                    instance_idx,
+                    data_instance,
+                    initial_prompt,
+                )
+                if get_extra_kwargs is not None
+                else {}
+            )
             tasks.append(
                 asyncio.create_task(
                     wrapper_construct_tree(
@@ -258,6 +276,7 @@ class HybridInferenceStrategy(InferenceStrategy):
                         initial_prompt,
                         self.max_depth,
                         data_instance=data_instance,
+                        **extra_tree_kwargs,
                     )
                 )
             )

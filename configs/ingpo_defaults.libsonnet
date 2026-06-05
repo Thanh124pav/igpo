@@ -48,6 +48,10 @@
     // use uniform SPO-style branch factor B instead. This avoids near-leaf
     // context exhaustion from TV probe continuations.
     skip_near_leaf_expand: false,
+    // When true, estimate root reward variance for every problem in the
+    // current minibatch and allocate the depth-0 branch budget across those
+    // roots before constructing each individual tree.
+    root_allocation: false,
 
     // Edge handling
     zero_advantage_when_pruned: true,

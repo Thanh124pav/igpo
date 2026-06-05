@@ -125,6 +125,7 @@ Tham số mặc định (`configs/ingpo_defaults.libsonnet`):
 | `local_value_share` | true | Path local (so sánh siblings) hay global (qua Y) |
 | `demo_examples_per_tree` | 2 | Số SHARE/PRUNE demo lưu mỗi cây |
 | `skip_near_leaf_expand` | false | Budget allocation: ở depth cuối, bỏ TV/budget allocation và expand uniform theo branch factor B |
+| `root_allocation` | false | Budget allocation: estimate variance ở các root trong minibatch và phân bổ branch budget depth 0 giữa các root đó |
 
 Override trong file `.jsonnet`:
 
