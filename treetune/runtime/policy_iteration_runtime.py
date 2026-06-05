@@ -175,6 +175,15 @@ class PolicyIterationRuntime(DistributedRuntime):
             logger.info("Final checkpoint already exists. Skipping iteration loop.")
             return
 
+        is_local_main_process = self.distributed_state.is_local_main_process
+        # Offline-friendly timing log: create it before model/trainer init so
+        # long SPO-tree startup and episode-generation stages expose the
+        # expected path immediately.
+        timing_log_path = self.exp_root / "training_timing.jsonl"
+        if is_local_main_process:
+            timing_log_path.parent.mkdir(parents=True, exist_ok=True)
+            timing_log_path.touch(exist_ok=True)
+
         t0 = time.time()
         # Initialize the model, optimizer, etc.
         self._init_policy_iteration()
@@ -185,15 +194,12 @@ class PolicyIterationRuntime(DistributedRuntime):
         if isinstance(self.episode_generator, EpisodeGenerator):
             self.episode_generator.set_trainer(trainer)
 
-        is_local_main_process = self.distributed_state.is_local_main_process
-
         latest_policy_path = None
         starting_iteration = 0
 
         # Offline-friendly timing log: one JSON record per iteration with the
         # train/eval/wall breakdown.  Independent of wandb so it works under
         # `wandb mode=offline` and on machines without internet.
-        timing_log_path = self.exp_root / "training_timing.jsonl"
         cumulative_train_seconds = 0.0
         cumulative_eval_seconds = 0.0
         loop_start_wall = time.time()
@@ -239,7 +245,12 @@ class PolicyIterationRuntime(DistributedRuntime):
                     continue
                 t_ep_gen = time.time() - t0
                 logger.info(f"Num. Episodes={len(episodes)}")
-                self._cloud_log({"timing/total/episode_generation": t_ep_gen, "train/global_iteration": iteration})
+                self._cloud_log(
+                    {
+                        "timing/total/episode_generation": t_ep_gen,
+                        "train/global_iteration": iteration,
+                    }
+                )
 
                 assert (
                     iteration == trainer.state.iteration
@@ -250,7 +261,12 @@ class PolicyIterationRuntime(DistributedRuntime):
                 t0 = time.time()
                 latest_policy_path = trainer.step(episodes)
                 t_train = time.time() - t0
-                self._cloud_log({"timing/total/training_step": t_train, "train/global_iteration": iteration})
+                self._cloud_log(
+                    {
+                        "timing/total/training_step": t_train,
+                        "train/global_iteration": iteration,
+                    }
+                )
 
                 assert (
                     iteration + 1 == trainer.state.iteration
@@ -270,13 +286,20 @@ class PolicyIterationRuntime(DistributedRuntime):
 
                 # Add evaluation here
                 t_eval = 0.0
-                if self.distributed_state.is_main_process: # Evaluate only on the main process
-                   if iteration % self.evaluate_every_n_iterations == 0:
-                       t0_eval = time.time()
-                       self.evaluate(iteration, latest_policy_path)
-                       t_eval = time.time() - t0_eval
-                       cumulative_eval_seconds += t_eval
-                       self._cloud_log({"timing/iter/eval_seconds": t_eval, "train/global_iteration": iteration})
+                if (
+                    self.distributed_state.is_main_process
+                ):  # Evaluate only on the main process
+                    if iteration % self.evaluate_every_n_iterations == 0:
+                        t0_eval = time.time()
+                        self.evaluate(iteration, latest_policy_path)
+                        t_eval = time.time() - t0_eval
+                        cumulative_eval_seconds += t_eval
+                        self._cloud_log(
+                            {
+                                "timing/iter/eval_seconds": t_eval,
+                                "train/global_iteration": iteration,
+                            }
+                        )
 
                 # self.distributed_state.wait_for_everyone() # Wait the main process to finish the evaluation
 
@@ -307,7 +330,6 @@ class PolicyIterationRuntime(DistributedRuntime):
             except EarlyStop as e:
                 logger.info(e)
                 break
-            
 
         trainer.save_final_checkpoint()
 
@@ -335,15 +357,12 @@ class PolicyIterationRuntime(DistributedRuntime):
         process_idx = self.distributed_state.process_index
 
         allocated_mem_mb = get_gpu_memory()[self.evaluate_gpu]
-        total_mem_mb = (
-            torch.cuda.get_device_properties(0).total_memory / 1024**2
-        )
+        total_mem_mb = torch.cuda.get_device_properties(0).total_memory / 1024**2
 
         remaining_mem_mb = (
             total_mem_mb - allocated_mem_mb
         ) * 0.9  # Allow for 10% tolerance
         vllm_gpu_memory_utilization = round(remaining_mem_mb / total_mem_mb, 2)
-
 
         logger.info(
             f"GPU #{self.evaluate_gpu} Auto-computed vLLM GPU memory utilization: {vllm_gpu_memory_utilization}. "
@@ -354,7 +373,7 @@ class PolicyIterationRuntime(DistributedRuntime):
 
         vllm_server = self.evaluation_vllm_server.construct(
             seed=self.global_vars["seed"],
-            gpu_memory_utilization=vllm_gpu_memory_utilization
+            gpu_memory_utilization=vllm_gpu_memory_utilization,
         )
 
         logs_dir = evaluation_root_dir / "logs"
@@ -370,7 +389,7 @@ class PolicyIterationRuntime(DistributedRuntime):
             hf_ckpt_path_or_model=last_policy_path,
             wait_for_response=True,
             log_path=vllm_log_file,
-            gpu_idx=self.evaluate_gpu, 
+            gpu_idx=self.evaluate_gpu,
             timeout=800,
         )
         os.environ["APP_OPENAI_VLLM_API_BASE"] = "none"
@@ -382,19 +401,18 @@ class PolicyIterationRuntime(DistributedRuntime):
             logger.info(f"Running inference pipeline `{inference_name}`")
 
             infer_pipeline = InferencePipeline.from_params(
-                        Params(pipeline_cfg),
-                        tokenizer=self.tokenizer,
-                        seed=2746318213,
-                        api_base_url=server_url,
-                        model_name=str(last_policy_path),
-                        metrics_prefix=f"ckpt--iter_{iteration}/",
-                        enable_cloud_logging_during_inference=False,
-                        use_cache=True,
-                        cloud_logger=self.cloud_logger,
-                        debug_mode=self.debug_mode,
-                        exp_root=evaluation_root_dir,
-                        iteration=iteration,
-                        
+                Params(pipeline_cfg),
+                tokenizer=self.tokenizer,
+                seed=2746318213,
+                api_base_url=server_url,
+                model_name=str(last_policy_path),
+                metrics_prefix=f"ckpt--iter_{iteration}/",
+                enable_cloud_logging_during_inference=False,
+                use_cache=True,
+                cloud_logger=self.cloud_logger,
+                debug_mode=self.debug_mode,
+                exp_root=evaluation_root_dir,
+                iteration=iteration,
             )
 
             results = infer_pipeline.generate()
@@ -404,19 +422,14 @@ class PolicyIterationRuntime(DistributedRuntime):
         vllm_server.stop_server()
 
         release_memory()
-        
-        threshold_mb = (
-            allocated_mem_mb * 1.1
-        )  # Allow for 10% tolerance
+
+        threshold_mb = allocated_mem_mb * 1.1  # Allow for 10% tolerance
         wait_for_memory_release(
             self.evaluate_gpu,
             threshold_mb=threshold_mb,
         )
 
         release_memory()
-
-
-
 
     def run_evaluation_of_gradient_variance(self):
         # Check if it's already done

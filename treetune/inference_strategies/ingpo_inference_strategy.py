@@ -124,9 +124,13 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_y_field = ingpo_y_field
         self.ingpo_score_concurrency = int(ingpo_score_concurrency)
         if ingpo_algorithm_mode not in {"share_prune", "budget_allocation"}:
-            raise ValueError(f"Unsupported ingpo_algorithm_mode: {ingpo_algorithm_mode}")
+            raise ValueError(
+                f"Unsupported ingpo_algorithm_mode: {ingpo_algorithm_mode}"
+            )
         if ingpo_budget_overhead_mode not in {"flexible", "none"}:
-            raise ValueError(f"Unsupported ingpo_budget_overhead_mode: {ingpo_budget_overhead_mode}")
+            raise ValueError(
+                f"Unsupported ingpo_budget_overhead_mode: {ingpo_budget_overhead_mode}"
+            )
         self.ingpo_algorithm_mode = ingpo_algorithm_mode
         self.ingpo_tv_estimator = ingpo_tv_estimator
         self.ingpo_n_tv_estimates = int(ingpo_n_tv_estimates)
@@ -136,7 +140,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_budget_lambda = float(ingpo_budget_lambda)
         self.ingpo_budget_overhead_mode = ingpo_budget_overhead_mode
         self.ingpo_budget_queue_count = int(ingpo_budget_queue_count)
-        self.ingpo_budget_queue_timeout_seconds = float(ingpo_budget_queue_timeout_seconds)
+        self.ingpo_budget_queue_timeout_seconds = float(
+            ingpo_budget_queue_timeout_seconds
+        )
         self._lp_client: Optional[VLLMLogprobClient] = None
 
     # ------------------------------------------------------------------
@@ -177,10 +183,14 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         problem_text: str,
         gold: str,
     ) -> AnswerSet:
-        client = openai.AsyncOpenAI(
-            api_key=self._lp_client.api_key,
-            base_url=self._lp_client.api_base,
-        ) if self._lp_client is not None else None
+        client = (
+            openai.AsyncOpenAI(
+                api_key=self._lp_client.api_key,
+                base_url=self._lp_client.api_base,
+            )
+            if self._lp_client is not None
+            else None
+        )
 
         async def sample_fn(prompt: str, n: int, temperature: float, max_tokens: int):
             if client is None:
@@ -202,7 +212,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             prompt_template=self.ingpo_y_prompt_template,
         )
         try:
-            return await gen.build(problem_id=problem_id, problem=problem_text, gold=gold)
+            return await gen.build(
+                problem_id=problem_id, problem=problem_text, gold=gold
+            )
         except Exception as exc:
             logger.warning(f"Y generation failed for problem {problem_id}: {exc}")
             return AnswerSet(problem_id=problem_id, gold=gold, y=[])
@@ -230,7 +242,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
 
         problem_text = data_instance.get("problem") if data_instance else None
         gold = data_instance.get(self.ingpo_y_field) if data_instance else None
-        problem_id = str(data_instance.get("_treetune__idx", uuid.uuid4())) if data_instance else str(uuid.uuid4())
+        problem_id = (
+            str(data_instance.get("_treetune__idx", uuid.uuid4()))
+            if data_instance
+            else str(uuid.uuid4())
+        )
 
         needs_answer_set = self.ingpo_enable_share and not self.ingpo_local_value_share
 
@@ -287,7 +303,8 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 answer_set=answer_set,
                 scorer=scorer,
                 thresholds=self.cfg_thresholds,
-                enable_share=self.ingpo_enable_share and not self.ingpo_local_value_share,
+                enable_share=self.ingpo_enable_share
+                and not self.ingpo_local_value_share,
                 enable_prune=False,
                 share_target=self.ingpo_share_target,
                 root_segment_id="root",
@@ -338,12 +355,18 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             src_prefix = src["full_text"]
             tgt_prefix = tgt["full_text"]
             src_scores, tgt_scores = await asyncio.gather(
-                asyncio.gather(*(scorer.score_one(src_prefix, c) for c in continuations)),
-                asyncio.gather(*(scorer.score_one(tgt_prefix, c) for c in continuations)),
+                asyncio.gather(
+                    *(scorer.score_one(src_prefix, c) for c in continuations)
+                ),
+                asyncio.gather(
+                    *(scorer.score_one(tgt_prefix, c) for c in continuations)
+                ),
             )
             return sampled_tv_from_logps(src_scores, tgt_scores)
 
-        async def _score_sibling_probs(parent: Node, siblings: Sequence[Node]) -> Dict[str, float]:
+        async def _score_sibling_probs(
+            parent: Node, siblings: Sequence[Node]
+        ) -> Dict[str, float]:
             if not siblings:
                 return {}
             # Reuse sum_logprobs stored during generation when available,
@@ -358,7 +381,10 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     pending.append((idx, child))
             if pending:
                 fetched = await asyncio.gather(
-                    *(scorer.score_one(parent["full_text"], child.get("text", "")) for _, child in pending)
+                    *(
+                        scorer.score_one(parent["full_text"], child.get("text", ""))
+                        for _, child in pending
+                    )
                 )
                 for (idx, _), val in zip(pending, fetched):
                     raw_scores[idx] = val
@@ -368,11 +394,14 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 for idx, child in enumerate(siblings)
             }
 
-        async def _try_local_value_share_and_prune(parent: Node, siblings: Sequence[Node]) -> None:
+        async def _try_local_value_share_and_prune(
+            parent: Node, siblings: Sequence[Node]
+        ) -> None:
             nonlocal local_shared_count, local_avg_tv_share
             nonlocal local_pruned_count, local_avg_gap_prune
             candidates = [
-                child for child in siblings
+                child
+                for child in siblings
                 if child.get("ingpo_action") == Action.EXPAND.value
                 and not child.get("leaf", False)
             ]
@@ -411,7 +440,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     continue
                 pair_jobs.append((src, tgt, continuations[: max(1, int(self.ingpo_m))]))
 
-            async def _score_pair_tv(src: Node, tgt: Node, continuations: Sequence[str]):
+            async def _score_pair_tv(
+                src: Node, tgt: Node, continuations: Sequence[str]
+            ):
                 try:
                     tv = await _score_local_tv(src, tgt, continuations)
                 except Exception as exc:
@@ -420,14 +451,21 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 return src, tgt, continuations, tv
 
             scored_pairs = await asyncio.gather(
-                *(_score_pair_tv(src, tgt, continuations) for src, tgt, continuations in pair_jobs)
+                *(
+                    _score_pair_tv(src, tgt, continuations)
+                    for src, tgt, continuations in pair_jobs
+                )
             )
 
             for src, tgt, continuations, tv in scored_pairs:
                 if tv is None:
                     continue
-                pair_tvs[frozenset((src["ingpo_segment_id"], tgt["ingpo_segment_id"]))] = tv
-                radius = confidence_radius(len(continuations), self.cfg_thresholds.alpha)
+                pair_tvs[
+                    frozenset((src["ingpo_segment_id"], tgt["ingpo_segment_id"]))
+                ] = tv
+                radius = confidence_radius(
+                    len(continuations), self.cfg_thresholds.alpha
+                )
                 tv_for_bound = tv + radius if self.ingpo_share_use_confidence else tv
                 value_bound = tv_to_value_bound(tv_for_bound, self.cfg_thresholds)
                 if src.get("ingpo_action") != Action.EXPAND.value:
@@ -529,7 +567,16 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 child_rewards.append(r)
             if child_rewards:
                 node["reward"] = float(sum(child_rewards) / len(child_rewards))
-                node["reward_std"] = float((sum((x - (sum(child_rewards) / len(child_rewards))) ** 2 for x in child_rewards) / len(child_rewards)) ** 0.5)
+                node["reward_std"] = float(
+                    (
+                        sum(
+                            (x - (sum(child_rewards) / len(child_rewards))) ** 2
+                            for x in child_rewards
+                        )
+                        / len(child_rewards)
+                    )
+                    ** 0.5
+                )
             else:
                 node["reward"] = 0.0
                 node["reward_std"] = 0.0
@@ -564,7 +611,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
 
             # Run local sibling triggers early (before probing every child) so
             # share/prune can stop branches without paying extra probe cost.
-            if self.ingpo_local_value_share and (self.ingpo_enable_share or self.ingpo_enable_prune):
+            if self.ingpo_local_value_share and (
+                self.ingpo_enable_share or self.ingpo_enable_prune
+            ):
                 await _try_local_value_share_and_prune(node, children)
 
             probe_tasks = []
@@ -600,14 +649,23 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 child["leaf"] = False
                 if local_engine is None:
                     if depth + 1 < max_depth:
-                        probe_tasks.append((child, asyncio.create_task(
-                            self.node_expander.expand(
-                                current_node=child,
-                                prefix=child["full_text"],
-                                depth=depth + 1,
-                                max_tokens=None if depth + 1 == max_depth - 1 else self.M,
+                        probe_tasks.append(
+                            (
+                                child,
+                                asyncio.create_task(
+                                    self.node_expander.expand(
+                                        current_node=child,
+                                        prefix=child["full_text"],
+                                        depth=depth + 1,
+                                        max_tokens=(
+                                            None
+                                            if depth + 1 == max_depth - 1
+                                            else self.M
+                                        ),
+                                    )
+                                ),
                             )
-                        )))
+                        )
                     continue
 
                 try:
@@ -620,28 +678,46 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 except Exception as exc:
                     logger.warning(f"InGPO decide() failed: {exc}")
                     if depth + 1 < max_depth:
-                        probe_tasks.append((child, asyncio.create_task(
-                            self.node_expander.expand(
-                                current_node=child,
-                                prefix=child["full_text"],
-                                depth=depth + 1,
-                                max_tokens=None if depth + 1 == max_depth - 1 else self.M,
+                        probe_tasks.append(
+                            (
+                                child,
+                                asyncio.create_task(
+                                    self.node_expander.expand(
+                                        current_node=child,
+                                        prefix=child["full_text"],
+                                        depth=depth + 1,
+                                        max_tokens=(
+                                            None
+                                            if depth + 1 == max_depth - 1
+                                            else self.M
+                                        ),
+                                    )
+                                ),
                             )
-                        )))
+                        )
                     continue
 
                 self._annotate_node(child, decision)
 
                 if decision.action is Action.EXPAND:
                     if depth + 1 < max_depth:
-                        probe_tasks.append((child, asyncio.create_task(
-                            self.node_expander.expand(
-                                current_node=child,
-                                prefix=child["full_text"],
-                                depth=depth + 1,
-                                max_tokens=None if depth + 1 == max_depth - 1 else self.M,
+                        probe_tasks.append(
+                            (
+                                child,
+                                asyncio.create_task(
+                                    self.node_expander.expand(
+                                        current_node=child,
+                                        prefix=child["full_text"],
+                                        depth=depth + 1,
+                                        max_tokens=(
+                                            None
+                                            if depth + 1 == max_depth - 1
+                                            else self.M
+                                        ),
+                                    )
+                                ),
                             )
-                        )))
+                        )
                 elif decision.action is Action.SHARE:
                     # Inherit value from share_target (set later in episode
                     # generator) but mark as a leaf so the tree code stops.
@@ -668,7 +744,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
 
             expansion_tasks = []
             for child in children:
-                if child.get("ingpo_action") == Action.EXPAND.value and not child.get("leaf", False):
+                if child.get("ingpo_action") == Action.EXPAND.value and not child.get(
+                    "leaf", False
+                ):
                     expansion_tasks.append(
                         asyncio.create_task(dfs(child, child["full_text"], depth + 1))
                     )
@@ -699,7 +777,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 engine.stats.avg_tv_share if engine is not None else local_avg_tv_share
             )
             stats["ingpo/avg_gap_when_prune"] = (
-                engine.stats.avg_gap_prune if engine is not None else local_avg_gap_prune
+                engine.stats.avg_gap_prune
+                if engine is not None
+                else local_avg_gap_prune
             )
         tree["ingpo_stats"] = stats
         tree["ingpo_answer_set_size"] = answer_set.m
@@ -724,7 +804,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         t0_tree = time.time()
         client = self._ensure_lp_client()
         scorer = make_lp_scorer(client, self._tokenize)
-        problem_id = str(data_instance.get("_treetune__idx", uuid.uuid4())) if data_instance else str(uuid.uuid4())
+        problem_id = (
+            str(data_instance.get("_treetune__idx", uuid.uuid4()))
+            if data_instance
+            else str(uuid.uuid4())
+        )
         logger.info(
             "InGPO budget-allocation mode active: TV share/prune disabled; "
             "TV used only for reward variance. overhead_mode=%s",
@@ -755,7 +839,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         )
 
         branch_factor_by_depth: Dict[int, int] = {}
+        requested_by_depth: Dict[int, int] = {}
         allocated_by_depth: Dict[int, int] = {}
+        built_by_depth: Dict[int, int] = {}
         underallocated_by_depth: Dict[int, int] = {}
         variance_seconds_by_depth: Dict[int, float] = {}
         allocation_seconds_by_depth: Dict[int, float] = {}
@@ -790,9 +876,13 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     max_tokens=max_tokens,
                 )
 
-        async def _complete_candidate(parent: Node, candidate: Node, depth: int, child_idx: int) -> Node:
+        async def _complete_candidate(
+            parent: Node, candidate: Node, depth: int, child_idx: int
+        ) -> Node:
             child = dict(candidate)
-            child["ingpo_segment_id"] = f"{parent.get('ingpo_segment_id', 'root')}/{depth}/{child_idx}"
+            child["ingpo_segment_id"] = (
+                f"{parent.get('ingpo_segment_id', 'root')}/{depth}/{child_idx}"
+            )
             child["ingpo_parent_segment_id"] = parent.get("ingpo_segment_id", "root")
             child["ingpo_depth"] = depth + 1
             child["ingpo_action"] = Action.EXPAND.value
@@ -811,7 +901,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
 
             continuation_budget = self.M
             if self.ingpo_tv_subnode_max_tokens > 0:
-                continuation_budget = max(int(self.M) - self.ingpo_tv_subnode_max_tokens, 1)
+                continuation_budget = max(
+                    int(self.M) - self.ingpo_tv_subnode_max_tokens, 1
+                )
             continuations = await _expand_with_budget(
                 current_node=child,
                 prefix=child.get("full_text", ""),
@@ -823,12 +915,24 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 cont = continuations[0]
                 child["text"] = child.get("text", "") + cont.get("text", "")
                 child["full_text"] = cont.get("full_text", child.get("full_text", ""))
-                child["finish_reason"] = cont.get("finish_reason", child.get("finish_reason"))
+                child["finish_reason"] = cont.get(
+                    "finish_reason", child.get("finish_reason")
+                )
                 child["stop_text"] = cont.get("stop_text", child.get("stop_text"))
-                if child.get("sum_logprobs") is not None and cont.get("sum_logprobs") is not None:
-                    child["sum_logprobs"] = float(child["sum_logprobs"]) + float(cont["sum_logprobs"])
-                if child.get("num_tokens") is not None and cont.get("num_tokens") is not None:
-                    child["num_tokens"] = int(child["num_tokens"]) + int(cont["num_tokens"])
+                if (
+                    child.get("sum_logprobs") is not None
+                    and cont.get("sum_logprobs") is not None
+                ):
+                    child["sum_logprobs"] = float(child["sum_logprobs"]) + float(
+                        cont["sum_logprobs"]
+                    )
+                if (
+                    child.get("num_tokens") is not None
+                    and cont.get("num_tokens") is not None
+                ):
+                    child["num_tokens"] = int(child["num_tokens"]) + int(
+                        cont["num_tokens"]
+                    )
             return child
 
         def _set_reward_summary(node: Node) -> None:
@@ -840,7 +944,16 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 child_rewards.append(r)
             if child_rewards:
                 node["reward"] = float(sum(child_rewards) / len(child_rewards))
-                node["reward_std"] = float((sum((x - (sum(child_rewards) / len(child_rewards))) ** 2 for x in child_rewards) / len(child_rewards)) ** 0.5)
+                node["reward_std"] = float(
+                    (
+                        sum(
+                            (x - (sum(child_rewards) / len(child_rewards))) ** 2
+                            for x in child_rewards
+                        )
+                        / len(child_rewards)
+                    )
+                    ** 0.5
+                )
             else:
                 node["reward"] = 0.0
                 node["reward_std"] = 0.0
@@ -852,11 +965,14 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 break
 
             try:
-                base_branch_factor = int(self.node_expander.branch_factor_strategy({"depth": depth}))
+                base_branch_factor = int(
+                    self.node_expander.branch_factor_strategy({"depth": depth})
+                )
             except Exception:
                 base_branch_factor = 1
             total_depth_budget = base_branch_factor * len(expandable)
             branch_factor_by_depth[depth] = base_branch_factor
+            requested_by_depth[depth] = total_depth_budget
 
             t_var = time.time()
             estimate_tasks = [
@@ -890,7 +1006,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     queue_count=self.ingpo_budget_queue_count,
                     lambda_=self.ingpo_budget_lambda,
                 )
-                summaries = scheduler.allocate(expandable, total_depth_budget=total_depth_budget)
+                summaries = scheduler.allocate(
+                    expandable, total_depth_budget=total_depth_budget
+                )
                 allocations: Dict[str, int] = {}
                 weights: Dict[str, float] = {}
                 allocated_total = 0
@@ -916,6 +1034,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
 
             t_expand = time.time()
             next_frontier: List[Node] = []
+            built_total = 0
             for node in expandable:
                 node_id = str(node.get("ingpo_segment_id", "root"))
                 allocated = int(allocations.get(node_id, 0))
@@ -931,33 +1050,49 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     asyncio.create_task(_complete_candidate(node, cand, depth, idx))
                     for idx, cand in enumerate(selected)
                 ]
-                children = await asyncio.gather(*completion_tasks) if completion_tasks else []
+                children = (
+                    await asyncio.gather(*completion_tasks) if completion_tasks else []
+                )
                 node["children"] = children
+                built_total += len(children)
                 node["ingpo_discarded_budget_candidates"] = max(
                     len(node.get("ingpo_budget_candidates", [])) - len(selected),
                     0,
                 )
-                next_frontier.extend([child for child in children if not child.get("leaf", False)])
+                next_frontier.extend(
+                    [child for child in children if not child.get("leaf", False)]
+                )
                 _set_reward_summary(node)
             expansion_seconds_by_depth[depth] = time.time() - t_expand
+            built_by_depth[depth] = built_total
             frontier = next_frontier
 
         tree["ingpo_max_depth"] = int(max_depth)
         tree["ingpo_branch_factor_by_depth"] = dict(branch_factor_by_depth)
+        tree["ingpo_requested_node_budget_by_depth"] = dict(requested_by_depth)
         tree["ingpo_allocated_branch_factor_by_depth"] = dict(allocated_by_depth)
+        tree["ingpo_built_nodes_by_depth"] = dict(built_by_depth)
         tree["ingpo_underallocated_rollouts_by_depth"] = dict(underallocated_by_depth)
         tree["ingpo_variance_seconds_by_depth"] = dict(variance_seconds_by_depth)
         tree["ingpo_allocation_seconds_by_depth"] = dict(allocation_seconds_by_depth)
         tree["ingpo_expansion_seconds_by_depth"] = dict(expansion_seconds_by_depth)
         tree["ingpo_budget_overhead_mode"] = self.ingpo_budget_overhead_mode
         tree["ingpo_answer_set_size"] = 0
-        tree["ingpo_tree_construction_seconds"] = time.time() - t0_tree
+        tree_construction_seconds = time.time() - t0_tree
+        tree["tree_construction_seconds"] = tree_construction_seconds
+        tree["ingpo_tree_construction_seconds"] = tree_construction_seconds
         tree["ingpo_problem_id"] = problem_id
         tree["ingpo_stats"] = {
-            "ingpo/allocated_rollouts": float(sum(allocated_by_depth.values())),
-            "ingpo/underallocated_rollouts": float(sum(underallocated_by_depth.values())),
-            "ingpo/variance_estimation_seconds": float(sum(variance_seconds_by_depth.values())),
-            "ingpo/budget_allocation_seconds": float(sum(allocation_seconds_by_depth.values())),
+            **aggregate_tree_stats(tree),
+            "ingpo/budget/underallocated_node_budget": float(
+                sum(underallocated_by_depth.values())
+            ),
+            "ingpo/variance_estimation_seconds": float(
+                sum(variance_seconds_by_depth.values())
+            ),
+            "ingpo/budget_allocation_seconds": float(
+                sum(allocation_seconds_by_depth.values())
+            ),
             "ingpo/expansion_seconds": float(sum(expansion_seconds_by_depth.values())),
         }
         return tree

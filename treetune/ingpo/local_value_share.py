@@ -21,6 +21,7 @@ class LocalShareDecision:
     source_id: str
     target_id: str
     tv: float
+    value_bound: float
     n_continuations: int
     confidence_radius: float
     eta_used: float

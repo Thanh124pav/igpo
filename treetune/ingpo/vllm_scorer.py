@@ -30,10 +30,43 @@ class VLLMLogprobClient:
     max_concurrency: int = 64
     _semaphore: Optional[asyncio.Semaphore] = None
     _client: Optional[Any] = None
+    _loop: Optional[asyncio.AbstractEventLoop] = None
 
     def __post_init__(self) -> None:
         if httpx is None:
             raise RuntimeError("httpx is required for VLLMLogprobClient")
+
+    async def _ensure_async_resources(self) -> None:
+        """Create asyncio/httpx resources inside the currently running loop.
+
+        Creating asyncio primitives or async HTTP clients before a loop is
+        running can later surface as ``AttributeError: 'NoneType' object has no
+        attribute 'create_future'`` from ``asyncio`` internals.  The inference
+        strategy may also be reused across calls that are wrapped by separate
+        ``asyncio.run(...)`` loops, so recreate resources if the active loop
+        changes.
+        """
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "VLLMLogprobClient.prompt_logprobs must be awaited inside a running asyncio loop"
+            ) from exc
+
+        if self._client is not None and self._loop is loop:
+            return
+
+        if self._client is not None:
+            try:
+                await self._client.aclose()
+            except RuntimeError:
+                # The previous client may belong to an already-closed loop.
+                # Dropping it is safer than trying to reuse stale loop-bound
+                # resources.
+                pass
+
+        self._loop = loop
         self._semaphore = asyncio.Semaphore(self.max_concurrency)
         self._client = httpx.AsyncClient(timeout=self.timeout)
 
@@ -41,6 +74,8 @@ class VLLMLogprobClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+        self._semaphore = None
+        self._loop = None
 
     async def prompt_logprobs(self, prompt: str) -> List[float]:
         """Return per-token logprobs for `prompt`.  Length == #prompt tokens.
@@ -59,8 +94,11 @@ class VLLMLogprobClient:
             "temperature": 0.0,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        async with self._semaphore:  # type: ignore[union-attr]
-            resp = await self._client.post(url, json=payload, headers=headers)  # type: ignore[union-attr]
+        await self._ensure_async_resources()
+        assert self._semaphore is not None
+        assert self._client is not None
+        async with self._semaphore:
+            resp = await self._client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
         # vLLM returns choices[0].logprobs.token_logprobs : List[Optional[float]]
