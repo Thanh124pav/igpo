@@ -6,6 +6,9 @@
 {
   episode_generator+: {
     type: 'vineppo_episode_generator',
+    // The upstream VinePPO experiments reconstruct contiguous response slices
+    // with delimiter.join(steps), and configure the delimiter as an empty string.
+    reasoning_step_delimiter: '',
     inference_strategy+: { type: 'cot' },
   },
   trainer+: {
