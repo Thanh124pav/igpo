@@ -80,6 +80,9 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_share_pair_budget_fraction: float = 0.25,
         ingpo_share_use_confidence: bool = False,
         ingpo_score_concurrency: int = 64,
+        ingpo_score_timeout_seconds: float = 120.0,
+        ingpo_score_retry_attempts: int = 3,
+        ingpo_score_retry_backoff_seconds: float = 0.5,
         ingpo_algorithm_mode: str = "budget_allocation",
         ingpo_tv_estimator: str = "subnode",
         ingpo_n_tv_estimates: int = 8,
@@ -113,6 +116,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_share_pair_budget_fraction = float(ingpo_share_pair_budget_fraction)
         self.ingpo_share_use_confidence = bool(ingpo_share_use_confidence)
         self.ingpo_score_concurrency = int(ingpo_score_concurrency)
+        self.ingpo_score_timeout_seconds = float(ingpo_score_timeout_seconds)
+        self.ingpo_score_retry_attempts = int(ingpo_score_retry_attempts)
+        self.ingpo_score_retry_backoff_seconds = float(
+            ingpo_score_retry_backoff_seconds
+        )
         if ingpo_algorithm_mode not in {"share_prune", "budget_allocation"}:
             raise ValueError(
                 f"Unsupported ingpo_algorithm_mode: {ingpo_algorithm_mode}"
@@ -156,7 +164,10 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             api_base=api_base,
             model=model,
             api_key=api_key,
+            timeout=self.ingpo_score_timeout_seconds,
             max_concurrency=self.ingpo_score_concurrency,
+            retry_attempts=self.ingpo_score_retry_attempts,
+            retry_backoff_seconds=self.ingpo_score_retry_backoff_seconds,
         )
         return self._lp_client
 

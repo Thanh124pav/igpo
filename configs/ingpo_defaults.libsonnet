@@ -25,6 +25,9 @@
 
     // Tail-fill concurrency to vLLM /completions
     score_concurrency: 64,
+    score_timeout_seconds: 120.0,
+    score_retry_attempts: 3,
+    score_retry_backoff_seconds: 0.5,
 
     // Budget-allocation mode: TV approximation estimates reward variance,
     // then branch budget is allocated across frontier nodes. TV SHARE/PRUNE
