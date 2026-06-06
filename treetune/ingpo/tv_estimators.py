@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 
@@ -35,6 +35,7 @@ class TVEstimateResult:
     prob_matrix: List[List[float]]
     pair_tvs: Dict[PairKey, float]
     reward_variance: float
+    candidates: List[Node] = field(default_factory=list)
 
 
 class ConditionalTVEstimator:
@@ -65,8 +66,10 @@ class ConditionalTVEstimator:
         self._score_cache: Dict[Tuple[str, str], float] = {}
 
     async def estimate_for_parent(self, parent: Node, *, depth: int) -> TVEstimateResult:
-        samples = await self._generate_samples(parent, depth=depth)
-        return await self.estimate_from_samples(samples)
+        samples, candidates = await self._generate_samples(parent, depth=depth)
+        result = await self.estimate_from_samples(samples)
+        result.candidates = candidates
+        return result
 
     async def estimate_from_samples(self, samples: Sequence[TVSample]) -> TVEstimateResult:
         samples = list(samples)
@@ -94,7 +97,9 @@ class ConditionalTVEstimator:
             reward_variance=variance,
         )
 
-    async def _generate_samples(self, parent: Node, *, depth: int) -> List[TVSample]:
+    async def _generate_samples(
+        self, parent: Node, *, depth: int
+    ) -> Tuple[List[TVSample], List[Node]]:
         if self.mode == "hierachical":
             first_count = max(2, int(math.ceil(math.sqrt(self.n_tv_estimates))))
             second_per_first = max(1, int(math.ceil(self.n_tv_estimates / first_count)))
@@ -110,27 +115,33 @@ class ConditionalTVEstimator:
             branch_factor=first_count,
         )
 
+        # A non-`length` finish reason means the model reached a terminal
+        # response during phase one.  Keep it as a reusable budget candidate,
+        # but do not ask the model to continue from an already-finished prefix.
+        continuable_first_nodes = [
+            first for first in first_nodes if first.get("finish_reason") == "length"
+        ]
+
         samples: List[TVSample] = []
-        second_tasks = []
-        for first in first_nodes:
-            second_tasks.append(
-                asyncio.create_task(
-                    self._expand(
-                        current_node=first,
-                        prefix=first.get("full_text", ""),
-                        depth=depth + 1,
-                        max_tokens=self.second_phase_tokens,
-                        branch_factor=second_per_first,
-                    )
+        second_tasks = [
+            asyncio.create_task(
+                self._expand(
+                    current_node=first,
+                    prefix=first.get("full_text", ""),
+                    depth=depth + 1,
+                    max_tokens=self.second_phase_tokens,
+                    branch_factor=second_per_first,
                 )
             )
+            for first in continuable_first_nodes
+        ]
         second_batches = await asyncio.gather(*second_tasks) if second_tasks else []
-        for first, seconds in zip(first_nodes, second_batches):
+        for first, seconds in zip(continuable_first_nodes, second_batches):
             for second in seconds:
                 samples.append(TVSample(first=first, second=second))
                 if len(samples) >= self.n_tv_estimates:
-                    return samples
-        return samples
+                    return samples, first_nodes
+        return samples, first_nodes
 
     async def _expand(
         self,

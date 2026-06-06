@@ -10,15 +10,15 @@ for every token in the prompt — exactly what we need to compute
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-try:
-    import httpx  # type: ignore
-except ImportError:  # pragma: no cover
-    httpx = None  # type: ignore
+import httpx
 
 from treetune.ingpo.lp_scorer import LPScorer
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,13 +28,11 @@ class VLLMLogprobClient:
     api_key: str = "EMPTY"
     timeout: float = 120.0
     max_concurrency: int = 64
+    retry_attempts: int = 3
+    retry_backoff_seconds: float = 0.5
     _semaphore: Optional[asyncio.Semaphore] = None
     _client: Optional[Any] = None
     _loop: Optional[asyncio.AbstractEventLoop] = None
-
-    def __post_init__(self) -> None:
-        if httpx is None:
-            raise RuntimeError("httpx is required for VLLMLogprobClient")
 
     async def _ensure_async_resources(self) -> None:
         """Create asyncio/httpx resources inside the currently running loop.
@@ -77,12 +75,27 @@ class VLLMLogprobClient:
         self._semaphore = None
         self._loop = None
 
-    async def prompt_logprobs(self, prompt: str) -> List[float]:
-        """Return per-token logprobs for `prompt`.  Length == #prompt tokens.
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        if isinstance(
+            exc,
+            (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadError,
+                httpx.ReadTimeout,
+                httpx.WriteError,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+            ),
+        ):
+            return True
+        return isinstance(exc, httpx.HTTPStatusError) and (
+            exc.response.status_code == 429 or exc.response.status_code >= 500
+        )
 
-        First token's logprob is `None` from vLLM (no preceding context); we
-        keep it as `None` so `LPScorer.score_one` can drop it via filter.
-        """
+    async def prompt_logprobs(self, prompt: str) -> List[float]:
+        """Return per-token prompt logprobs, retrying transient vLLM failures."""
 
         url = f"{self.api_base.rstrip('/')}/completions"
         payload: Dict[str, Any] = {
@@ -97,34 +110,48 @@ class VLLMLogprobClient:
         await self._ensure_async_resources()
         assert self._semaphore is not None
         assert self._client is not None
-        try:
-            async with self._semaphore:
-                resp = await self._client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-        except Exception as exc:
-            if httpx is not None and isinstance(exc, httpx.HTTPStatusError):
-                response_text = exc.response.text[:500]
-                raise RuntimeError(
-                    "vLLM logprob request failed with HTTP "
-                    f"{exc.response.status_code} for url={url!r}, model={self.model!r}: "
-                    f"{response_text}"
-                ) from exc
-            if httpx is not None and isinstance(
-                exc,
-                (
-                    httpx.ConnectError,
-                    httpx.ConnectTimeout,
-                    httpx.ReadTimeout,
-                    httpx.NetworkError,
-                ),
-            ):
-                raise RuntimeError(
-                    f"vLLM logprob connection failed for url={url!r}, "
-                    f"model={self.model!r}: {exc!r}"
-                ) from exc
-            raise
-        # vLLM returns choices[0].logprobs.token_logprobs : List[Optional[float]]
+
+        attempts = max(1, int(self.retry_attempts))
+        for attempt in range(1, attempts + 1):
+            try:
+                async with self._semaphore:
+                    resp = await self._client.post(url, json=payload, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                break
+            except Exception as exc:
+                retryable = self._is_retryable_error(exc)
+                if retryable and attempt < attempts:
+                    delay = max(0.0, self.retry_backoff_seconds) * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Transient vLLM logprob failure for url=%r, model=%r "
+                        "(attempt %d/%d); retrying in %.2fs: %r",
+                        url,
+                        self.model,
+                        attempt,
+                        attempts,
+                        delay,
+                        exc,
+                    )
+                    if delay:
+                        await asyncio.sleep(delay)
+                    continue
+
+                if isinstance(exc, httpx.HTTPStatusError):
+                    response_text = exc.response.text[:500]
+                    raise RuntimeError(
+                        "vLLM logprob request failed with HTTP "
+                        f"{exc.response.status_code} for url={url!r}, "
+                        f"model={self.model!r} after {attempt} attempt(s): "
+                        f"{response_text}"
+                    ) from exc
+                if retryable:
+                    raise RuntimeError(
+                        f"vLLM logprob connection failed for url={url!r}, "
+                        f"model={self.model!r} after {attempt} attempt(s): {exc!r}"
+                    ) from exc
+                raise
+
         choice = data["choices"][0]
         token_logprobs = choice.get("logprobs", {}).get("token_logprobs") or []
         return list(token_logprobs)
