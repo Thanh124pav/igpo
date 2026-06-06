@@ -41,6 +41,25 @@ from treetune.ingpo.vllm_scorer import VLLMLogprobClient, make_lp_scorer
 logger = get_logger(__name__)
 
 
+def _finalize_empty_expansion_node(
+    node: Node,
+    *,
+    initial_prompt: str,
+    data_instance: Optional[Dict[str, Any]],
+    reward_function,
+) -> None:
+    """Turn a final-depth node into a scored leaf when generation is empty."""
+
+    node["children"] = []
+    node["reward"], _ = reward_function(
+        query=initial_prompt,
+        response=node.get("full_text", node.get("text", "")),
+        dataset_instance=data_instance,
+    )
+    node["reward_std"] = 0.0
+    node["leaf"] = True
+
+
 @InferenceStrategy.register("ingpo", exist_ok=True)
 class InGPOInferenceStrategy(HybridInferenceStrategy):
     def __init__(
@@ -249,12 +268,12 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             node_id = str(instance_idx)
             unique_candidates: List[Node] = []
             seen_candidate_prefixes = set()
-            for sample in result.samples:
-                prefix_text = sample.first.get("full_text", "")
+            for candidate in result.candidates:
+                prefix_text = candidate.get("full_text", "")
                 if prefix_text in seen_candidate_prefixes:
                     continue
                 seen_candidate_prefixes.add(prefix_text)
-                unique_candidates.append(sample.first)
+                unique_candidates.append(candidate)
             root_allocations[instance_idx] = {
                 "allocated_branch_factor": int(allocations.get(node_id, 0)),
                 "budget_weight": float(weights.get(node_id, 0.0)),
@@ -868,6 +887,13 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 "finish_reason", child.get("finish_reason")
             )
             child["stop_text"] = cont.get("stop_text", child.get("stop_text"))
+            if child.get("finish_reason") != "length":
+                child["reward"], _ = self.reward_function(
+                    query=parent.get("full_text", ""),
+                    response=child.get("full_text", child.get("text", "")),
+                    dataset_instance=data_instance,
+                )
+                child["leaf"] = True
             if (
                 child.get("sum_logprobs") is not None
                 and cont.get("sum_logprobs") is not None
@@ -998,10 +1024,25 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                             dataset_instance=data_instance,
                         )
                         child["leaf"] = True
-                    node["children"] = children
                     node["ingpo_discarded_budget_candidates"] = 0
                     built_total += len(children)
-                    _set_reward_summary(node)
+                    if children:
+                        node["children"] = children
+                        _set_reward_summary(node)
+                    else:
+                        logger.warning(
+                            "Final uniform expansion produced no nodes at "
+                            "parent_depth=%s child_depth=%s; scoring the current "
+                            "node as a leaf",
+                            depth,
+                            depth + 1,
+                        )
+                        _finalize_empty_expansion_node(
+                            node,
+                            initial_prompt=initial_prompt,
+                            data_instance=data_instance,
+                            reward_function=self.reward_function,
+                        )
                 expansion_seconds_by_depth[depth] = time.time() - t_expand
                 built_by_depth[depth] = built_total
                 frontier = []
@@ -1028,12 +1069,12 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     node["ingpo_tv_support_size"] = len(result.samples)
                     unique_candidates: List[Node] = []
                     seen_candidate_prefixes = set()
-                    for sample in result.samples:
-                        prefix_text = sample.first.get("full_text", "")
+                    for candidate in result.candidates:
+                        prefix_text = candidate.get("full_text", "")
                         if prefix_text in seen_candidate_prefixes:
                             continue
                         seen_candidate_prefixes.add(prefix_text)
-                        unique_candidates.append(sample.first)
+                        unique_candidates.append(candidate)
                     node["ingpo_budget_candidates"] = unique_candidates
                     # Keep the cached matrix available for debugging without recomputing P(ss_k2 | ss_i1).
                     node["ingpo_tv_logp_matrix"] = result.logp_matrix

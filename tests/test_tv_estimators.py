@@ -33,6 +33,7 @@ class RecordingExpander:
                 "text": f" c{i}",
                 "full_text": f"{prefix} c{i}",
                 "sum_logprobs": float(i),
+                "finish_reason": "length",
                 "depth": depth + 1,
             }
             for i in range(branch_factor)
@@ -97,3 +98,53 @@ def test_estimate_for_parent_generates_subnode_samples_with_budgeted_expansion()
     assert all(call["branch_factor"] == 1 for call in expander.calls[1:])
     assert all(call["max_tokens"] == 7 for call in expander.calls[1:])
     assert result.pair_tvs
+
+
+class MixedFinishExpander:
+    def __init__(self):
+        self.calls = []
+
+    async def expand(self, *args, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            prefix = kwargs["prefix"]
+            return [
+                {
+                    "text": " done",
+                    "full_text": f"{prefix} done",
+                    "finish_reason": "stop",
+                },
+                {
+                    "text": " partial",
+                    "full_text": f"{prefix} partial",
+                    "finish_reason": "length",
+                },
+            ]
+        prefix = kwargs["prefix"]
+        return [
+            {
+                "text": " continuation",
+                "full_text": f"{prefix} continuation",
+                "finish_reason": "stop",
+            }
+        ]
+
+
+def test_estimate_does_not_continue_terminal_first_phase_nodes():
+    expander = MixedFinishExpander()
+    estimator = ConditionalTVEstimator(
+        scorer=FakeScorer(),
+        node_expander=expander,
+        gamma=0.5,
+        n_tv_estimates=2,
+    )
+
+    result = asyncio.run(estimator.estimate_for_parent({"full_text": "root"}, depth=0))
+
+    assert len(expander.calls) == 2
+    assert expander.calls[1]["prefix"] == "root partial"
+    assert [candidate["finish_reason"] for candidate in result.candidates] == [
+        "stop",
+        "length",
+    ]
+    assert len(result.samples) == 1
