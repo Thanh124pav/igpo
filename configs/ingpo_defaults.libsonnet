@@ -25,6 +25,9 @@
 
     // Tail-fill concurrency to vLLM /completions
     score_concurrency: 64,
+    score_timeout_seconds: 120.0,
+    score_retry_attempts: 3,
+    score_retry_backoff_seconds: 0.5,
 
     // Budget-allocation mode: TV approximation estimates reward variance,
     // then branch budget is allocated across frontier nodes. TV SHARE/PRUNE
@@ -42,7 +45,7 @@
     // When true, skip TV/budget allocation at the final expansion depth and
     // use uniform SPO-style branch factor B instead. This avoids near-leaf
     // context exhaustion from TV probe continuations.
-    skip_near_leaf_expand: false,
+    skip_near_leaf_expand: true,
     // When true, estimate root reward variance for every problem in the
     // current minibatch and allocate the depth-0 branch budget across those
     // roots before constructing each individual tree.

@@ -65,6 +65,30 @@ def test_ingpo_defaults_use_budget_allocation_not_share_prune():
     assert "algorithm_mode: 'budget_allocation'" in defaults
     assert "enable_share: false" in defaults
     assert "enable_prune: false" in defaults
+    assert "skip_near_leaf_expand: true" in defaults
+    assert "score_retry_attempts: 3" in defaults
+    assert "score_retry_backoff_seconds: 0.5" in defaults
     assert "ingpo_algorithm_mode: $.ingpo.algorithm_mode" in overlay
     assert "ingpo_tv_estimator: $.ingpo.tv_estimator" in overlay
+    assert "ingpo_score_retry_attempts: $.ingpo.score_retry_attempts" in overlay
+    assert (
+        "ingpo_score_retry_backoff_seconds: $.ingpo.score_retry_backoff_seconds"
+        in overlay
+    )
     assert "store_logprobs: true" in overlay
+
+
+def test_deepseek_r1_qwen_7b_math_configs_use_local_checkpoint():
+    model_path = "/workspace/storage-shared/models/DeepSeek-R1-Distill-Qwen-7B"
+    override = (CONFIGS / "model_overrides/deepseekR1Qwen7B.jsonnet").read_text()
+    assert model_path in override
+
+    expected_configs = {
+        "polIter_deepseekR1Qwen7B_ingpo_tree_MATH.jsonnet": "ingpo_overlay.libsonnet",
+        "polIter_deepseekR1Qwen7B_spo_tree_MATH.jsonnet": "deepseekR1Qwen7B.jsonnet",
+        "polIter_deepseekR1Qwen7B_grpo_MATH.jsonnet": "deepseekR1Qwen7B.jsonnet",
+        "polIter_deepseekR1Qwen7B_rloo_MATH.jsonnet": "adv_method: 'rloo'",
+    }
+    for filename, marker in expected_configs.items():
+        config_text = (CONFIGS / filename).read_text()
+        assert marker in config_text
