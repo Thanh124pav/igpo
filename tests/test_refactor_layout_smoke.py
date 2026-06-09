@@ -76,3 +76,19 @@ def test_ingpo_defaults_use_budget_allocation_not_share_prune():
         in overlay
     )
     assert "store_logprobs: true" in overlay
+
+
+def test_deepseek_r1_qwen_7b_math_configs_use_local_checkpoint():
+    model_path = "/workspace/storage-shared/models/DeepSeek-R1-Distill-Qwen-7B"
+    override = (CONFIGS / "model_overrides/deepseekR1Qwen7B.jsonnet").read_text()
+    assert model_path in override
+
+    expected_configs = {
+        "polIter_deepseekR1Qwen7B_ingpo_tree_MATH.jsonnet": "ingpo_overlay.libsonnet",
+        "polIter_deepseekR1Qwen7B_spo_tree_MATH.jsonnet": "deepseekR1Qwen7B.jsonnet",
+        "polIter_deepseekR1Qwen7B_grpo_MATH.jsonnet": "deepseekR1Qwen7B.jsonnet",
+        "polIter_deepseekR1Qwen7B_rloo_MATH.jsonnet": "adv_method: 'rloo'",
+    }
+    for filename, marker in expected_configs.items():
+        config_text = (CONFIGS / filename).read_text()
+        assert marker in config_text
