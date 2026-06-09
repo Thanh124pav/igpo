@@ -7,6 +7,8 @@ local ds_stage_2_w_cpu_optimizer = (import '../deepspeed/zero_2.jsonnet') + {
   },
 };
 
+local use_flash_attention_2 = std.extVar('APP_DISABLE_FLASH_ATTENTION') != '1';
+
 {
   trainer+: {
     type: 'ppo',
@@ -15,7 +17,7 @@ local ds_stage_2_w_cpu_optimizer = (import '../deepspeed/zero_2.jsonnet') + {
       type: 'pretrained_causal_lm',
       disable_dropout: true,
       pretrained_args+: {
-        use_flash_attention_2: true,
+        use_flash_attention_2: use_flash_attention_2,
       },
     },
     actor_deepspeed_config: ds_stage_2_w_cpu_optimizer,
@@ -26,7 +28,7 @@ local ds_stage_2_w_cpu_optimizer = (import '../deepspeed/zero_2.jsonnet') + {
         type: 'pretrained_causal_lm',
         disable_dropout: true,
         pretrained_args+: {
-          use_flash_attention_2: true,
+          use_flash_attention_2: use_flash_attention_2,
         },
       },
     },
@@ -35,7 +37,7 @@ local ds_stage_2_w_cpu_optimizer = (import '../deepspeed/zero_2.jsonnet') + {
     reference_model+: {
       type: 'pretrained_causal_lm',
       pretrained_args+: {
-        use_flash_attention_2: true,
+        use_flash_attention_2: use_flash_attention_2,
       },
     },
     reference_deepspeed_config: {

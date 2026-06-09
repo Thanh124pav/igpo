@@ -76,31 +76,44 @@ def allocate_branch_factors(
     *,
     total_budget: int,
     lambda_: float = 0.02,
+    n_min: int = 0,
 ) -> AllocationSummary:
     """Allocate branch factors with strict floor rounding.
 
     ``sigma_i^2`` is stored as ``ingpo_reward_variance``.  Therefore
-    ``sigma_i^4 = Var(P_i)^2`` and the weight is
-    ``(sigma_i^4 + lambda_) ** 0.25``.
+    ``sigma_i^4 = Var(P_i)^2``.  Nodes with ``sigma_i^4 < lambda_`` receive
+    ``n_min`` branches; the remaining budget is allocated to other nodes with
+    weight ``sqrt(sigma_i^4 - lambda_)``.
 
     Leftover budget from floor rounding is intentionally not redistributed.
     """
 
     total_budget = max(int(total_budget), 0)
     lambda_ = max(float(lambda_), 0.0)
+    n_min = max(int(n_min), 0)
     weights: Dict[str, float] = {}
+    allocations: Dict[str, int] = {}
     for idx, node in enumerate(nodes):
         sigma2 = max(float(node.get("ingpo_reward_variance", 0.0) or 0.0), 0.0)
         sigma4 = sigma2 * sigma2
-        weights[_node_id(node, idx)] = (sigma4 + lambda_) ** 0.25
+        node_id = _node_id(node, idx)
+        margin = sigma4 - lambda_
+        if margin < 0.0:
+            weights[node_id] = 0.0
+            allocations[node_id] = n_min
+        else:
+            weights[node_id] = math.sqrt(margin)
 
     weight_sum = sum(weights.values())
-    allocations: Dict[str, int] = {}
-    if total_budget <= 0 or weight_sum <= 0.0:
-        allocations = {node_id: 0 for node_id in weights}
-    else:
+    remaining_budget = max(total_budget - sum(allocations.values()), 0)
+    if remaining_budget > 0 and weight_sum > 0.0:
         for node_id, weight in weights.items():
-            allocations[node_id] = int(math.floor(total_budget * weight / weight_sum))
+            if node_id not in allocations:
+                allocations[node_id] = int(
+                    math.floor(remaining_budget * weight / weight_sum)
+                )
+    for node_id in weights:
+        allocations.setdefault(node_id, 0)
 
     allocated = sum(allocations.values())
     return AllocationSummary(

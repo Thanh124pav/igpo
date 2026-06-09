@@ -28,8 +28,8 @@ CFGS="$(resolve_math_config ingpo_tree "${MODEL}"),${TREE_CFG},${SUBSET_CFG},${V
 
 # Optionally disable FlashAttention at runtime (useful if CUDA/FlashAttention
 # build is not available). Set DISABLE_FLASH_ATTENTION=1 when invoking the
-# script to append the small overlay that turns off FlashAttention usage.
+# script to propagate APP_DISABLE_FLASH_ATTENTION=1 into the Jsonnet config.
 if [[ "${DISABLE_FLASH_ATTENTION:-0}" == "1" ]]; then
-  CFGS=",${INGPO_ROOT}/configs/models/no_flshAttn.jsonnet,${CFGS}
+  export APP_DISABLE_FLASH_ATTENTION=1
 fi
 ingpo_run "${EXP_NAME}" "${CFGS}" "$@"

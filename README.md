@@ -187,13 +187,33 @@ Code base treetune kế thừa MIT License của SPO. Xem `docs/legacy/LICENSE_S
 
 ### Benchmark được đánh giá trong lúc training
 
-Các cấu hình training trên MATH chạy thêm bốn benchmark ở mỗi lần evaluation:
+Chuẩn bị các dataset eval local:
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate deeplearning
+python scripts/download_eval_datasets.py
+```
+
+Các cấu hình training trên MATH chạy thêm năm benchmark ở mỗi lần evaluation:
 
 - `aime24_test`: `math-ai/aime24` (30 bài).
 - `aime25_test`: `math-ai/aime25` (30 bài).
 - `amc23_test`: `math-ai/amc23` (40 bài AMC 2023).
-- `olympiadbench_test`: subset text-only tiếng Anh `OE_TO_maths_en_COMP` của `Hothan/OlympiadBench`.
+- `olympiadbench_test`: file
+  `OlympiadBench/OE_TO_maths_en_COMP/OE_TO_maths_en_COMP.parquet` của
+  `Hothan/OlympiadBench` (674 bài).
+- `collegeMath_test`: `data/collegeMath` (2,818 bài).
 
-Dataset được tải từ Hugging Face ở lần evaluation đầu tiên và được cache bởi thư viện
-`datasets`. Tần suất evaluation vẫn được điều khiển bởi
-`INGPO_EVAL_EVERY_N_ITERATIONS`.
+Downloader pin revision Hugging Face và lưu từng nguồn ở dạng `DatasetDict` dưới
+`data/`. Thư mục cũ `data/olympiadbench` có 675 bài, gồm một bài không còn trong
+bản Hugging Face hiện tại và 15 đề còn placeholder lỗi; benchmark dùng bản chuẩn
+ở `data/olympiadbench_hf`.
+
+Smoke test format prompt và generation bằng model nhỏ:
+
+```bash
+python scripts/smoke_eval_datasets.py --local-files-only
+```
+
+Tần suất evaluation vẫn được điều khiển bởi `INGPO_EVAL_EVERY_N_ITERATIONS`.

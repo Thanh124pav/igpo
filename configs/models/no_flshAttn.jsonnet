@@ -1,13 +1,21 @@
 {
     trainer+: {
-        training_args+: {
-            per_device_train_batch_size: 2,
-            gradient_accumulation_steps: 64,
+        actor_model+: {
+            pretrained_args+: {
+                use_flash_attention_2: false,
+            },
         },
-    },
-    model+: {
-        pretrained_args+: {
-            use_flash_attention_2: false,
+        critic_model+: {
+            pretrained_backbone_model+: {
+                pretrained_args+: {
+                    use_flash_attention_2: false,
+                },
+            },
+        },
+        reference_model+: {
+            pretrained_args+: {
+                use_flash_attention_2: false,
+            },
         },
     },
 }

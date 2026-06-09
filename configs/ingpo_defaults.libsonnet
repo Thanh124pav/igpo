@@ -39,6 +39,7 @@
     tv_second_phase_tokens: 60,
     tv_includes_half_factor: false,
     budget_lambda: 0.02,
+    n_min: 0,
     budget_overhead_mode: 'flexible',
     budget_queue_count: 2,
     budget_queue_timeout_seconds: 0.5,

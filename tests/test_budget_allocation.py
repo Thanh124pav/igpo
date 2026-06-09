@@ -27,13 +27,49 @@ def test_reward_variance_uses_ordered_pair_normalization():
 
 def test_allocate_branch_factors_keeps_floor_underallocation():
     nodes = [
-        {"ingpo_segment_id": "a", "ingpo_reward_variance": 0.0},
+        {"ingpo_segment_id": "a", "ingpo_reward_variance": 0.2},
         {"ingpo_segment_id": "b", "ingpo_reward_variance": 1.0},
     ]
     summary = allocate_branch_factors(nodes, total_budget=5, lambda_=0.02)
     assert summary.allocated_budget <= 5
     assert summary.underallocated_budget == 5 - summary.allocated_budget
     assert summary.allocations["b"] >= summary.allocations["a"]
+
+
+def test_allocate_branch_factors_returns_n_min_below_lambda():
+    nodes = [
+        {"ingpo_segment_id": "below", "ingpo_reward_variance": 0.1},
+        {"ingpo_segment_id": "above", "ingpo_reward_variance": 0.5},
+    ]
+
+    summary = allocate_branch_factors(
+        nodes,
+        total_budget=7,
+        lambda_=0.02,
+        n_min=2,
+    )
+
+    assert summary.weights["below"] == 0.0
+    assert summary.weights["above"] == pytest.approx(math.sqrt(0.5**2 - 0.02))
+    assert summary.allocations == {"below": 2, "above": 5}
+
+
+def test_allocate_branch_factors_defaults_n_min_to_zero():
+    nodes = [{"ingpo_segment_id": "below", "ingpo_reward_variance": 0.1}]
+
+    summary = allocate_branch_factors(nodes, total_budget=5, lambda_=0.02)
+
+    assert summary.allocations == {"below": 0}
+    assert summary.underallocated_budget == 5
+
+
+def test_allocate_branch_factors_handles_zero_margin():
+    nodes = [{"ingpo_segment_id": "equal", "ingpo_reward_variance": 0.5}]
+
+    summary = allocate_branch_factors(nodes, total_budget=5, lambda_=0.25, n_min=2)
+
+    assert summary.weights == {"equal": 0.0}
+    assert summary.allocations == {"equal": 0}
 
 
 def test_allocate_branch_factors_handles_zero_budget_and_fallback_ids():

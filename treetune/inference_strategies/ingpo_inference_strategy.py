@@ -23,7 +23,7 @@ from treetune.inference_strategies.tree_inference import Node
 from treetune.logging_utils import get_logger
 
 from treetune.ingpo.logging_helpers import aggregate_tree_stats
-from treetune.ingpo.thresholds import ThresholdConfig # tv_to_value_bound
+from treetune.ingpo.thresholds import ThresholdConfig, tv_to_value_bound
 from treetune.ingpo.budget_allocation import allocate_branch_factors
 from treetune.ingpo.budget_scheduler import FlexibleBudgetScheduler
 from treetune.ingpo.tv_estimators import ConditionalTVEstimator
@@ -90,6 +90,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_tv_second_phase_tokens: int = 60,
         ingpo_tv_includes_half_factor: bool = False,
         ingpo_budget_lambda: float = 0.02,
+        ingpo_n_min: int = 0,
         ingpo_budget_overhead_mode: str = "flexible",
         ingpo_budget_queue_count: int = 2,
         ingpo_budget_queue_timeout_seconds: float = 0.5,
@@ -136,6 +137,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_tv_second_phase_tokens = int(ingpo_tv_second_phase_tokens)
         self.ingpo_tv_includes_half_factor = bool(ingpo_tv_includes_half_factor)
         self.ingpo_budget_lambda = float(ingpo_budget_lambda)
+        self.ingpo_n_min = max(int(ingpo_n_min), 0)
         self.ingpo_budget_overhead_mode = ingpo_budget_overhead_mode
         self.ingpo_budget_queue_count = int(ingpo_budget_queue_count)
         self.ingpo_budget_queue_timeout_seconds = float(
@@ -246,6 +248,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
             scheduler = FlexibleBudgetScheduler(
                 queue_count=self.ingpo_budget_queue_count,
                 lambda_=self.ingpo_budget_lambda,
+                n_min=self.ingpo_n_min,
             )
             summaries = scheduler.allocate(
                 root_nodes, total_depth_budget=total_root_budget
@@ -260,6 +263,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 root_nodes,
                 total_budget=total_root_budget,
                 lambda_=self.ingpo_budget_lambda,
+                n_min=self.ingpo_n_min,
             )
             allocations = summary.allocations
             weights = summary.weights
@@ -526,7 +530,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     len(continuations), self.cfg_thresholds.alpha
                 )
                 tv_for_bound = tv + radius if self.ingpo_share_use_confidence else tv
-                value_bound = tv_for_bound #tv_to_value_bound(tv_for_bound, self.cfg_thresholds)
+                value_bound = tv_to_value_bound(tv_for_bound, self.cfg_thresholds)
                 if src.get("ingpo_action") != Action.EXPAND.value:
                     continue
                 if tgt.get("ingpo_action") != Action.EXPAND.value:
@@ -1095,6 +1099,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                     scheduler = FlexibleBudgetScheduler(
                         queue_count=self.ingpo_budget_queue_count,
                         lambda_=self.ingpo_budget_lambda,
+                        n_min=self.ingpo_n_min,
                     )
                     summaries = scheduler.allocate(
                         expandable, total_depth_budget=total_depth_budget
@@ -1113,6 +1118,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                         expandable,
                         total_budget=total_depth_budget,
                         lambda_=self.ingpo_budget_lambda,
+                        n_min=self.ingpo_n_min,
                     )
                     allocations = summary.allocations
                     weights = summary.weights

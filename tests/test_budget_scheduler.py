@@ -16,3 +16,15 @@ def test_flexible_scheduler_marks_queue_ids_and_floor_allocates():
     assert sum(summary.underallocated_budget for summary in summaries) == 9 - sum(
         summary.allocated_budget for summary in summaries
     )
+
+
+def test_flexible_scheduler_passes_n_min_to_queue_allocations():
+    nodes = [
+        {"ingpo_segment_id": "a", "ingpo_reward_variance": 0.0},
+        {"ingpo_segment_id": "b", "ingpo_reward_variance": 0.0},
+    ]
+    scheduler = FlexibleBudgetScheduler(queue_count=1, lambda_=0.02, n_min=1)
+
+    summaries = scheduler.allocate(nodes, total_depth_budget=4)
+
+    assert summaries[0].allocations == {"a": 1, "b": 1}

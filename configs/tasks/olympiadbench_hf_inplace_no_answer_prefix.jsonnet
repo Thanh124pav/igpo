@@ -1,7 +1,7 @@
 (import 'math_inplace_no_answer_prefix.jsonnet') + {
-  load_dataset_dict: false,
-  dataset_dict_path: null,
-  hf_dataset_args: ['Hothan/OlympiadBench', 'OE_TO_maths_en_COMP'],
+  load_dataset_dict: true,
+  dataset_dict_path: 'data/olympiadbench_hf',
+  hf_dataset_args: null,
   problem_field: 'question',
   answer_field: 'final_answer',
   solution_field: 'solution',

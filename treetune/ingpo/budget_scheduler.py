@@ -26,9 +26,16 @@ class FlexibleBudgetScheduler:
     deterministic and testable.
     """
 
-    def __init__(self, *, queue_count: int = 2, lambda_: float = 0.02):
+    def __init__(
+        self,
+        *,
+        queue_count: int = 2,
+        lambda_: float = 0.02,
+        n_min: int = 0,
+    ):
         self.queues = [BudgetQueue(queue_id=i) for i in range(max(int(queue_count), 1))]
         self.lambda_ = float(lambda_)
+        self.n_min = max(int(n_min), 0)
 
     def allocate(
         self,
@@ -57,6 +64,7 @@ class FlexibleBudgetScheduler:
                 queue.nodes,
                 total_budget=queue_budget,
                 lambda_=self.lambda_,
+                n_min=self.n_min,
             )
             summaries.append(summary)
         return summaries

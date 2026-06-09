@@ -15,6 +15,11 @@ export APP_JSONNET_PATH="${INGPO_ROOT}/configs:${INGPO_ROOT}"
 
 # Standard env vars (kept compatible with upstream SPO conventions).
 export APP_SEED="${APP_SEED:-42}"
+export APP_DISABLE_FLASH_ATTENTION="${APP_DISABLE_FLASH_ATTENTION:-${DISABLE_FLASH_ATTENTION:-0}}"
+CUDA13_LIB_DIR="$(find "${HOME}/miniconda3/envs" -path '*/site-packages/nvidia/cu13/lib' -type d 2>/dev/null | head -n 1)"
+if [[ -n "${CUDA13_LIB_DIR}" ]]; then
+  export LD_LIBRARY_PATH="${CUDA13_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
 export MASTER_PORT="${MASTER_PORT:-$(python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('', 0)); print(s.getsockname()[1]); s.close()")}"
 export APP_DIRECTORY="${APP_DIRECTORY:-${INGPO_ROOT}/experiments}"
 export APP_MINIMIZE_STORED_FILES="${APP_MINIMIZE_STORED_FILES:-True}"
@@ -126,6 +131,9 @@ ensure_runtime_config() {
   fi
   if [[ -n "${INGPO_BUDGET_LAMBDA:-}" ]]; then
     ingpo_inference_overrides+="      ingpo_budget_lambda: ${INGPO_BUDGET_LAMBDA},"$'\n'
+  fi
+  if [[ -n "${INGPO_N_MIN:-}" ]]; then
+    ingpo_inference_overrides+="      ingpo_n_min: ${INGPO_N_MIN},"$'\n'
   fi
   if [[ -n "${INGPO_BUDGET_QUEUE_COUNT:-}" ]]; then
     ingpo_inference_overrides+="      ingpo_budget_queue_count: ${INGPO_BUDGET_QUEUE_COUNT},"$'\n'
