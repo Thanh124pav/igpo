@@ -108,6 +108,9 @@ local olympiadbench_test_inference_pipeline =
     inference_name: 'olympiadbench_test',
   };
 
+local competition_benchmark_pipelines =
+  (import 'evaluation/math_competition_benchmarks.libsonnet')(math_inference_pipeline);
+
 {
   inference_pipelines: [
     math_test_inference_pipeline,
@@ -115,7 +118,7 @@ local olympiadbench_test_inference_pipeline =
     // math_train_inference_pipeline,
     // collegeMath_test_inference_pipeline,
     // olympiadbench_test_inference_pipeline,
-  ],
+  ] + competition_benchmark_pipelines,
 
   evaluation_vllm_server: {},
 }
