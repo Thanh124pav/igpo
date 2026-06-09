@@ -119,6 +119,8 @@ Tham số mặc định (`configs/ingpo_defaults.libsonnet`):
 | `epsilon` | 0.02 | Ngưỡng value gap cho Prune |
 | `local_value_share` | true | Chỉ dùng path local so sánh siblings; global Y path đã bị loại bỏ |
 | `demo_examples_per_tree` | 2 | Số demo budget/local gate lưu mỗi cây |
+| `budget_lambda` | 0.02 | Ngưỡng trong trọng số `sqrt(sigma_i^4 - budget_lambda)` |
+| `n_min` | 0 | Số nhánh trả về khi `sigma_i^4 - budget_lambda < 0` |
 | `skip_near_leaf_expand` | false | Budget allocation: ở depth cuối, bỏ TV/budget allocation và expand uniform theo branch factor B |
 | `root_allocation` | false | Budget allocation: estimate variance ở các root trong minibatch và phân bổ branch budget depth 0 giữa các root đó |
 
