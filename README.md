@@ -184,3 +184,16 @@ Code base treetune kế thừa MIT License của SPO. Xem `docs/legacy/LICENSE_S
 - [VinePPO paper](https://arxiv.org/abs/2410.01679) — McGill
 - [DPO paper](https://arxiv.org/abs/2305.18290) — Stanford
 - `PLAN.md` — đặc tả chi tiết thuật toán InGPO
+
+### Benchmark được đánh giá trong lúc training
+
+Các cấu hình training trên MATH chạy thêm bốn benchmark ở mỗi lần evaluation:
+
+- `aime24_test`: `math-ai/aime24` (30 bài).
+- `aime25_test`: `math-ai/aime25` (30 bài).
+- `amc23_test`: `math-ai/amc23` (40 bài AMC 2023).
+- `olympiadbench_test`: subset text-only tiếng Anh `OE_TO_maths_en_COMP` của `Hothan/OlympiadBench`.
+
+Dataset được tải từ Hugging Face ở lần evaluation đầu tiên và được cache bởi thư viện
+`datasets`. Tần suất evaluation vẫn được điều khiển bởi
+`INGPO_EVAL_EVERY_N_ITERATIONS`.

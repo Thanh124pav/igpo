@@ -38,6 +38,11 @@ class MATH(Task):
         intermediate_step_delimiter: str = "\n",
         inplace_split_solution: bool = False,
         answer_prefix: Optional[str] = "\n\n# Answer\n",
+        problem_field: str = "problem",
+        answer_field: Optional[str] = "answer",
+        solution_field: Optional[str] = "solution",
+        normalize_dataset_fields: bool = False,
+        use_dataset_answer: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -57,6 +62,11 @@ class MATH(Task):
         self.intermediate_step_delimiter = intermediate_step_delimiter
         self.answer_prefix = answer_prefix
         self.inplace_split_solution = inplace_split_solution
+        self.problem_field = problem_field
+        self.answer_field = answer_field
+        self.solution_field = solution_field
+        self.normalize_dataset_fields = normalize_dataset_fields
+        self.use_dataset_answer = use_dataset_answer
 
         # If few-shot examples are to be included, load the dataset from the provided path.
         if self.prepend_in_context_few_shot:
@@ -142,6 +152,41 @@ class MATH(Task):
 
     def build_dataset(self) -> DatasetDict:
         datasets = super().build_dataset()
+
+        if self.normalize_dataset_fields:
+            problem_field = self.problem_field
+            answer_field = self.answer_field
+            solution_field = self.solution_field
+
+            def normalize_math_fields(example: Dict[str, Any]) -> Dict[str, Any]:
+                problem = example[problem_field]
+                output = {"problem": problem}
+
+                if solution_field is not None and solution_field in example:
+                    output["solution"] = example[solution_field]
+
+                if answer_field is not None and answer_field in example:
+                    answer = example[answer_field]
+                elif "solution" in output and isinstance(output["solution"], str):
+                    answer = extract_math_answer(problem, output["solution"])
+                else:
+                    raise ValueError(
+                        "Math datasets must provide either an answer field or a "
+                        "string solution from which the answer can be extracted."
+                    )
+
+                if not isinstance(answer, list):
+                    answer = [str(answer)]
+                else:
+                    answer = [str(item) for item in answer]
+                output["answer"] = answer
+                return output
+
+            datasets = datasets.map(
+                normalize_math_fields,
+                num_proc=self.hf_num_proc,
+                desc="Normalizing math fields",
+            )
 
         def append_gold_solution_steps_str(example: Dict[str, Any]) -> Dict[str, Any]:
             sol_steps = example["gold_solution_steps"]
@@ -243,7 +288,7 @@ class MATH(Task):
                     if (len(prompt_tokens) + max_generation_tokens) <= context_size:
                         break
                     logger.warning(
-                        f"Could not fit the prompt in the context size. Retrying..."
+                        "Could not fit the prompt in the context size. Retrying..."
                     )
                     num_tries += 1
 
@@ -490,7 +535,10 @@ class MATH(Task):
         item: Optional[Dict[str, Any]] = None,
     ) -> bool:
         item = copy.deepcopy(item)
-        answer = extract_math_answer(item["problem"], item["solution"])
+        if self.use_dataset_answer:
+            answer = item["answer"]
+        else:
+            answer = extract_math_answer(item["problem"], item["solution"])
         item["answer"] = answer
         item["prediction"] = given_answer
         return eval_math(item)
