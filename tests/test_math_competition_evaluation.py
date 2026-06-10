@@ -133,3 +133,30 @@ def test_math_eval_configs_compile_with_all_benchmarks(config_name):
         "olympiadbench_test",
         "collegeMath_test",
     } <= inference_names
+
+
+def test_smollm_eval_config_uses_one_model_and_small_gpu_limits():
+    config = json.loads(
+        _jsonnet.evaluate_file(
+            str(CONFIGS / "polIter_smollm_135m_eval_MATH.jsonnet"),
+            ext_vars={
+                "APP_SEED": "42",
+                "APP_DISABLE_FLASH_ATTENTION": "1",
+            },
+        )
+    )
+    model_name = "HuggingFaceTB/SmolLM2-135M"
+
+    assert config["tokenizer"]["hf_model_name"] == model_name
+    assert config["evaluation_vllm_server"]["max_num_seqs"] == 8
+    assert config["evaluation_vllm_server"]["max_model_len"] == 1024
+
+    for pipeline in config["inference_pipelines"]:
+        strategy = pipeline["inference_strategy"]
+        assert strategy["guidance_llm"]["model"] == model_name
+        assert strategy["guidance_llm"]["tokenizer_name"] == model_name
+        assert (
+            strategy["node_expander"]["tokenizer"]["hf_model_name"]
+            == model_name
+        )
+        assert strategy["node_expander"]["model_context_size"] == 1024

@@ -8,6 +8,7 @@ ENABLE_PREFIX_CACHING=false
 DISABLE_SLIDING_WINDOW=false
 DISABLE_FRONTEND_MULTIPROCESSING=false
 MAX_MODEL_LEN=""
+DTYPE="${VLLM_DTYPE:-}"
 
 # Parse named parameters
 while [[ "$#" -gt 0 ]]; do
@@ -23,6 +24,7 @@ while [[ "$#" -gt 0 ]]; do
         --disable-sliding-window) DISABLE_SLIDING_WINDOW=true ;;
         --max-model-len) MAX_MODEL_LEN="$2"; shift ;;
         --disable-frontend-multiprocessing) DISABLE_FRONTEND_MULTIPROCESSING=true ;;
+        --dtype) DTYPE="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
@@ -35,10 +37,22 @@ ARGS=(
     --host 0.0.0.0
     --port "$PORT"
     --seed "$SEED"
-    --dtype bfloat16
     --gpu-memory-utilization "$GPU_MEM_UTILIZATION"
     --max-num-seqs "$MAX_NUM_SEQS"
 )
+
+if [ -z "$DTYPE" ]; then
+    DTYPE="$(python3 - <<'PY'
+import os
+import torch
+
+gpu_idx = int(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0])
+major, _minor = torch.cuda.get_device_capability(gpu_idx)
+print("bfloat16" if major >= 8 else "half")
+PY
+)"
+fi
+ARGS+=(--dtype "$DTYPE")
 
 if [ -n "${SWAP_SPACE:-}" ]; then
     ARGS+=(--swap-space "$SWAP_SPACE")
