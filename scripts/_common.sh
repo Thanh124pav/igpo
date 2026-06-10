@@ -13,10 +13,29 @@ export PYTHONPATH="${INGPO_ROOT}:${PYTHONPATH:-}"
 # Jsonnet `import` resolves under the unified configs/ tree.
 export APP_JSONNET_PATH="${INGPO_ROOT}/configs:${INGPO_ROOT}"
 
+resolve_python_cmd() {
+  if command -v python3 >/dev/null 2>&1; then
+    INGPO_PYTHON_CMD=(python3)
+  elif command -v python >/dev/null 2>&1; then
+    INGPO_PYTHON_CMD=(python)
+  elif command -v py >/dev/null 2>&1; then
+    INGPO_PYTHON_CMD=(py -3)
+  else
+    echo "Cannot find python3, python, or py." >&2
+    return 1
+  fi
+}
+
+resolve_python_cmd
+
 # Standard env vars (kept compatible with upstream SPO conventions).
 export APP_SEED="${APP_SEED:-42}"
 export APP_DISABLE_FLASH_ATTENTION="${APP_DISABLE_FLASH_ATTENTION:-${DISABLE_FLASH_ATTENTION:-0}}"
-export MASTER_PORT="${MASTER_PORT:-$(python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('', 0)); print(s.getsockname()[1]); s.close()")}"
+CUDA13_LIB_DIR="$(find "${HOME}/miniconda3/envs" -path '*/site-packages/nvidia/cu13/lib' -type d 2>/dev/null | head -n 1 || true)"
+if [[ -n "${CUDA13_LIB_DIR}" ]]; then
+  export LD_LIBRARY_PATH="${CUDA13_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
+export MASTER_PORT="${MASTER_PORT:-$("${INGPO_PYTHON_CMD[@]}" -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.bind(('', 0)); print(s.getsockname()[1]); s.close()")}"
 export APP_DIRECTORY="${APP_DIRECTORY:-${INGPO_ROOT}/experiments}"
 export APP_MINIMIZE_STORED_FILES="${APP_MINIMIZE_STORED_FILES:-True}"
 export WANDB_PROJECT="${WANDB_PROJECT:-treetune}"

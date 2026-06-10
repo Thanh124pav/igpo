@@ -40,6 +40,22 @@ def test_math_benchmark_overlay_defines_all_requested_evals():
         assert f"inference_name: '{inference_name}'" in overlay
 
 
+def test_aime24_only_overlay_filters_eval_pipelines(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    config = json.loads(
+        _jsonnet.evaluate_snippet(
+            "snippet",
+            '(import "configs/qwen1_5b_base_for_MATH_eval.jsonnet")'
+            ' + (import "configs/evaluation/aime24_only.jsonnet")',
+        )
+    )
+    inference_names = [
+        pipeline["inference_name"] for pipeline in config["inference_pipelines"]
+    ]
+
+    assert inference_names == ["aime24_test"]
+
+
 def test_downloaded_tasks_use_local_normalized_math_dataset_fields():
     expected = {
         "aime24_inplace_no_answer_prefix.jsonnet": (
