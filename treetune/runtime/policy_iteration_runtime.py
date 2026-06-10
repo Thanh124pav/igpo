@@ -43,8 +43,23 @@ def print_evaluation_result(
     inference_name: str,
     analyzer_outputs: List[Any],
     result_dir: Path,
+    summary_path: Optional[Path] = None,
+    model_name: Optional[str] = None,
 ) -> None:
-    """Print analyzer metrics prominently for command-line evaluations."""
+    """Print analyzer metrics and optionally append a durable JSONL summary."""
+    record = {
+        "inference_name": inference_name,
+        "metrics": analyzer_outputs or [],
+        "model": model_name,
+        "result_dir": str(result_dir),
+    }
+    if summary_path is not None:
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with summary_path.open("a", encoding="utf-8") as summary_file:
+            summary_file.write(
+                json.dumps(record, sort_keys=True, default=str) + "\n"
+            )
+
     print(f"\n=== Evaluation result: {inference_name} ===", flush=True)
     if analyzer_outputs:
         for output in analyzer_outputs:
@@ -56,6 +71,8 @@ def print_evaluation_result(
     else:
         print("No analyzer metrics were produced.", flush=True)
     print(f"Predictions: {result_dir}", flush=True)
+    if summary_path is not None:
+        print(f"Summary file: {summary_path}", flush=True)
     print("=" * (27 + len(inference_name)), flush=True)
 
 
@@ -444,6 +461,8 @@ class PolicyIterationRuntime(DistributedRuntime):
                     inference_name,
                     analyzer_outputs,
                     infer_pipeline.get_result_dir(),
+                    evaluation_root_dir / "evaluation_results.jsonl",
+                    str(last_policy_path),
                 )
 
         vllm_server.stop_server()
@@ -588,6 +607,8 @@ class PolicyIterationRuntime(DistributedRuntime):
                         inference_name,
                         analyzer_outputs,
                         infer_pipeline.get_result_dir(),
+                        eval_dir / "evaluation_results.jsonl",
+                        str(vllm_ckpt_dir),
                     )
 
             # Mark the checkpoint as done
@@ -817,6 +838,8 @@ class PolicyIterationRuntime(DistributedRuntime):
                     inference_name,
                     analyzer_outputs,
                     infer_pipeline.get_result_dir(),
+                    eval_dir / "evaluation_results.jsonl",
+                    str(vllm_ckpt),
                 )
 
         # Mark the checkpoint as done

@@ -137,6 +137,12 @@ bash scripts/evaluate.sh --list-datasets
 Nếu không truyền `--dataset` hoặc `--datasets`, script vẫn chạy toàn bộ
 `inference_pipelines` trong config như trước.
 
+Sau mỗi dataset, metric được in lên terminal và append vào:
+
+```text
+experiments/<eval-name>/evaluation/iteration__0/evaluation_results.jsonl
+```
+
 ## Compose configs
 
 Mỗi config experiment ghép từ các lớp overlay:

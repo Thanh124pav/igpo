@@ -18,10 +18,13 @@ DATA = ROOT / "data"
 
 def test_evaluation_result_is_printed_to_terminal(capsys, tmp_path):
     result_dir = tmp_path / "inference_results"
+    summary_path = tmp_path / "evaluation_results.jsonl"
     print_evaluation_result(
         "aime24_test",
         [{"once_hit": 0.25, "majority_vote": 0.2}],
         result_dir,
+        summary_path,
+        "checkpoint/hf_pretrained",
     )
 
     output = capsys.readouterr().out
@@ -29,6 +32,15 @@ def test_evaluation_result_is_printed_to_terminal(capsys, tmp_path):
     assert '"majority_vote": 0.2' in output
     assert '"once_hit": 0.25' in output
     assert f"Predictions: {result_dir}" in output
+    assert f"Summary file: {summary_path}" in output
+
+    record = json.loads(summary_path.read_text().strip())
+    assert record == {
+        "inference_name": "aime24_test",
+        "metrics": [{"majority_vote": 0.2, "once_hit": 0.25}],
+        "model": "checkpoint/hf_pretrained",
+        "result_dir": str(result_dir),
+    }
 
 
 def test_math_eval_configs_include_shared_benchmarks():
