@@ -45,7 +45,7 @@ Checkpoint options:
                           and evaluate checkpoints/*/hf_pretrained in order.
 
 Dataset options:
-  --dataset NAME          Evaluate one pipeline. Repeat to select several.
+  --dataset NAME [...]    Evaluate one or more pipelines.
   --datasets A,B,C        Evaluate a comma-separated list of pipelines.
   --list-datasets         Print supported aliases and exit.
 
@@ -254,8 +254,17 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dataset)
       [[ $# -ge 2 ]] || { echo "--dataset requires a name" >&2; exit 2; }
-      SELECTED_PIPELINES+=("$(normalize_pipeline_name "$2")")
-      shift 2
+      shift
+      dataset_count=0
+      while [[ $# -gt 0 && "$1" != -* ]]; do
+        SELECTED_PIPELINES+=("$(normalize_pipeline_name "$1")")
+        dataset_count=$((dataset_count + 1))
+        shift
+      done
+      [[ ${dataset_count} -gt 0 ]] || {
+        echo "--dataset requires at least one name" >&2
+        exit 2
+      }
       ;;
     --dataset=*)
       SELECTED_PIPELINES+=(

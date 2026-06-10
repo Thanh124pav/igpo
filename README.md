@@ -96,7 +96,7 @@ bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
 # Đánh giá nhiều dataset
 bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
     experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010/hf_pretrained \
-    --datasets math,aime24,olympiadbench \
+    --dataset math aime24 olympiadbench \
     --debug_mode=true
 
 # Ghép thêm config override; config sau override config trước
