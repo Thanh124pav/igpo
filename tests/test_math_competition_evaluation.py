@@ -7,12 +7,28 @@ import _jsonnet
 import pytest
 
 from treetune.common import Params
+from treetune.runtime.policy_iteration_runtime import print_evaluation_result
 from treetune.tasks import Task
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs"
 DATA = ROOT / "data"
+
+
+def test_evaluation_result_is_printed_to_terminal(capsys, tmp_path):
+    result_dir = tmp_path / "inference_results"
+    print_evaluation_result(
+        "aime24_test",
+        [{"once_hit": 0.25, "majority_vote": 0.2}],
+        result_dir,
+    )
+
+    output = capsys.readouterr().out
+    assert "=== Evaluation result: aime24_test ===" in output
+    assert '"majority_vote": 0.2' in output
+    assert '"once_hit": 0.25' in output
+    assert f"Predictions: {result_dir}" in output
 
 
 def test_math_eval_configs_include_shared_benchmarks():

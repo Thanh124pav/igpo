@@ -39,6 +39,26 @@ from treetune.episode_generators.exception import NoTrainingDataException
 logger = get_logger(__name__)
 
 
+def print_evaluation_result(
+    inference_name: str,
+    analyzer_outputs: List[Any],
+    result_dir: Path,
+) -> None:
+    """Print analyzer metrics prominently for command-line evaluations."""
+    print(f"\n=== Evaluation result: {inference_name} ===", flush=True)
+    if analyzer_outputs:
+        for output in analyzer_outputs:
+            if output is not None:
+                print(
+                    json.dumps(output, sort_keys=True, default=str),
+                    flush=True,
+                )
+    else:
+        print("No analyzer metrics were produced.", flush=True)
+    print(f"Predictions: {result_dir}", flush=True)
+    print("=" * (27 + len(inference_name)), flush=True)
+
+
 def get_zero_to_fp32_script_path() -> Path:
     """Get the path to the `zero_to_fp32.py` script."""
     return get_repo_dir() / "scripts" / "zero_to_fp32.py"
@@ -418,7 +438,13 @@ class PolicyIterationRuntime(DistributedRuntime):
 
             results = infer_pipeline.generate()
             infer_pipeline.save_results_to_cloud(results)
-            infer_pipeline.analyze(results)
+            analyzer_outputs = infer_pipeline.analyze(results)
+            if self.distributed_state.is_local_main_process:
+                print_evaluation_result(
+                    inference_name,
+                    analyzer_outputs,
+                    infer_pipeline.get_result_dir(),
+                )
 
         vllm_server.stop_server()
 
@@ -556,7 +582,13 @@ class PolicyIterationRuntime(DistributedRuntime):
                 )
                 results = infer_pipeline.generate()
                 infer_pipeline.save_results_to_cloud(results)
-                infer_pipeline.analyze(results)
+                analyzer_outputs = infer_pipeline.analyze(results)
+                if self.distributed_state.is_local_main_process:
+                    print_evaluation_result(
+                        inference_name,
+                        analyzer_outputs,
+                        infer_pipeline.get_result_dir(),
+                    )
 
             # Mark the checkpoint as done
             (eval_dir / "done").touch()
@@ -779,7 +811,13 @@ class PolicyIterationRuntime(DistributedRuntime):
             )
             results = infer_pipeline.generate()
             infer_pipeline.save_results_to_cloud(results)
-            infer_pipeline.analyze(results)
+            analyzer_outputs = infer_pipeline.analyze(results)
+            if self.distributed_state.is_local_main_process:
+                print_evaluation_result(
+                    inference_name,
+                    analyzer_outputs,
+                    infer_pipeline.get_result_dir(),
+                )
 
         # Mark the checkpoint as done
         (eval_dir / "done").touch()
