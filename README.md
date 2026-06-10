@@ -86,8 +86,56 @@ INGPO_TREE=666 bash scripts/train_ingpo_tree_MATH.sh
 
 ```bash
 bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
-    experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010
+    experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010/hf_pretrained
+
+# Chỉ đánh giá AIME 2024
+bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
+    experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010/hf_pretrained \
+    --dataset aime24
+
+# Đánh giá nhiều dataset
+bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
+    experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010/hf_pretrained \
+    --datasets math,aime24,olympiadbench \
+    --debug_mode=true
+
+# Ghép thêm config override; config sau override config trước
+bash scripts/evaluate.sh polIter_qwen1_5b_base_ingpo_tree_MATH \
+    experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010/hf_pretrained \
+    --config local/math_local_10 \
+    --config local/math_local_runtime \
+    --dataset math
+
+# Cũng có thể truyền danh sách config phân tách bằng dấu phẩy
+bash scripts/evaluate.sh \
+    polIter_qwen1_5b_base_ingpo_tree_MATH,local/math_local_10 \
+    experiments/ingpo-tree-666-qwen1.5b-math/iteration_0010/hf_pretrained \
+    --dataset math
+
+# Đổi model/checkpoint, tokenizer, context và generation limit trực tiếp
+bash scripts/evaluate.sh \
+    polIter_deepseekR1Qwen_ingpo_tree_MATH \
+    HuggingFaceTB/SmolLM2-135M \
+    --tokenizer HuggingFaceTB/SmolLM2-135M \
+    --context-length 4096 \
+    --max-new-tokens 1024 \
+    --dataset aime24
+
+# Eval lần lượt mọi checkpoint trong một experiment
+APP_EXPERIMENT_NAME=eval-training-sweep \
+bash scripts/evaluate.sh \
+    polIter_deepseekR1Qwen_ingpo_tree_MATH \
+    experiments/ingpo-tree-666-deepseekR1Qwen-math \
+    --all-checkpoints \
+    --context-length 4096 \
+    --datasets aime24,aime25
+
+# Xem danh sách alias
+bash scripts/evaluate.sh --list-datasets
 ```
+
+Nếu không truyền `--dataset` hoặc `--datasets`, script vẫn chạy toàn bộ
+`inference_pipelines` trong config như trước.
 
 ## Compose configs
 

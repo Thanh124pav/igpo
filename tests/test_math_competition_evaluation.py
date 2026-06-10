@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import subprocess
 
 import _jsonnet
 import pytest
@@ -160,3 +162,244 @@ def test_smollm_eval_config_uses_one_model_and_small_gpu_limits():
             == model_name
         )
         assert strategy["node_expander"]["model_context_size"] == 1024
+
+
+def test_eval_pipeline_selector_filters_requested_datasets():
+    config = json.loads(
+        _jsonnet.evaluate_snippet(
+            "snippet",
+            (
+                f'(import "{CONFIGS / "deepseekR1Qwen_for_MATH_eval.jsonnet"}")'
+                f' + (import "{CONFIGS / "evaluation" / "select_pipelines.jsonnet"}")'
+            ),
+            ext_vars={"APP_EVAL_PIPELINES": "math_test,aime24_test"},
+        )
+    )
+
+    assert [
+        pipeline["inference_name"] for pipeline in config["inference_pipelines"]
+    ] == ["math_test", "aime24_test"]
+
+
+def test_eval_pipeline_selector_rejects_unknown_pipeline():
+    with pytest.raises(RuntimeError, match="Unknown evaluation pipeline"):
+        _jsonnet.evaluate_snippet(
+            "snippet",
+            (
+                f'(import "{CONFIGS / "deepseekR1Qwen_for_MATH_eval.jsonnet"}")'
+                f' + (import "{CONFIGS / "evaluation" / "select_pipelines.jsonnet"}")'
+            ),
+            ext_vars={"APP_EVAL_PIPELINES": "not_a_real_pipeline"},
+        )
+
+
+def test_eval_overrides_merge_before_pipeline_selector():
+    config = json.loads(
+        _jsonnet.evaluate_snippet(
+            "snippet",
+            (
+                f'(import "{CONFIGS / "polIter_deepseekR1Qwen_ingpo_tree_MATH.jsonnet"}")'
+                f' + (import "{CONFIGS / "local" / "math_local_10.jsonnet"}")'
+                f' + (import "{CONFIGS / "evaluation" / "select_pipelines.jsonnet"}")'
+            ),
+            ext_vars={
+                "APP_SEED": "42",
+                "APP_DISABLE_FLASH_ATTENTION": "0",
+                "APP_EVAL_PIPELINES": "math_test",
+            },
+        )
+    )
+
+    assert [
+        pipeline["inference_name"] for pipeline in config["inference_pipelines"]
+    ] == ["math_test"]
+    assert (
+        config["inference_pipelines"][0]["task"]["dataset_dict_path"]
+        == "data/math-local-10"
+    )
+
+
+def test_eval_cli_overrides_tokenizer_context_and_generation_limit():
+    config = json.loads(
+        _jsonnet.evaluate_snippet(
+            "snippet",
+            (
+                f'(import "{CONFIGS / "deepseekR1Qwen_for_MATH_eval.jsonnet"}")'
+                f' + (import "{CONFIGS / "evaluation" / "cli_overrides.jsonnet"}")'
+            ),
+            ext_vars={
+                "APP_EVAL_TOKENIZER": "HuggingFaceTB/SmolLM2-135M",
+                "APP_EVAL_CONTEXT_LENGTH": "4096",
+                "APP_EVAL_MAX_NEW_TOKENS": "1024",
+            },
+        )
+    )
+
+    assert (
+        config["tokenizer"]["hf_model_name"]
+        == "HuggingFaceTB/SmolLM2-135M"
+    )
+    assert config["evaluation_vllm_server"]["max_model_len"] == 4096
+    for pipeline in config["inference_pipelines"]:
+        strategy = pipeline["inference_strategy"]
+        assert (
+            strategy["guidance_llm"]["tokenizer_name"]
+            == "HuggingFaceTB/SmolLM2-135M"
+        )
+        assert (
+            strategy["node_expander"]["tokenizer"]["hf_model_name"]
+            == "HuggingFaceTB/SmolLM2-135M"
+        )
+        assert strategy["node_expander"]["model_context_size"] == 4096
+        assert strategy["node_expander"]["program_kwargs"]["max_tokens"] == 1024
+
+
+def test_evaluate_script_selects_datasets_and_preserves_extra_args(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_deepspeed = fake_bin / "deepspeed"
+    fake_deepspeed.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo \"APP_EVAL_PIPELINES=${APP_EVAL_PIPELINES:-}\"\n"
+        "echo \"APP_EVAL_TOKENIZER=${APP_EVAL_TOKENIZER:-}\"\n"
+        "echo \"APP_EVAL_CONTEXT_LENGTH=${APP_EVAL_CONTEXT_LENGTH:-}\"\n"
+        "echo \"APP_EVAL_MAX_NEW_TOKENS=${APP_EVAL_MAX_NEW_TOKENS:-}\"\n"
+        "echo \"APP_EXPERIMENT_NAME=${APP_EXPERIMENT_NAME:-}\"\n"
+        "printf 'ARG=%s\\n' \"$@\"\n"
+    )
+    fake_deepspeed.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["APP_DIRECTORY"] = str(tmp_path / "experiments")
+    env["APP_EXPERIMENT_NAME"] = "test-eval-selection"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "evaluate.sh"),
+            (
+                "polIter_deepseekR1Qwen_ingpo_tree_MATH,"
+                "local/math_local_10"
+            ),
+            "/tmp/checkpoint/hf_pretrained",
+            "--config",
+            "configs/local/math_local_runtime.jsonnet",
+            "--dataset",
+            "math",
+            "--datasets",
+            "aime24,olympiadbench",
+            "--debug_mode=true",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert (
+        "Selected evaluation pipelines: "
+        "math_test,aime24_test,olympiadbench_test"
+    ) in result.stdout
+    assert (
+        "APP_EVAL_PIPELINES=math_test,aime24_test,olympiadbench_test"
+    ) in result.stdout
+    assert "select_pipelines.jsonnet" in result.stdout
+    config_arg = next(
+        line.removeprefix("ARG=")
+        for line in result.stdout.splitlines()
+        if "polIter_deepseekR1Qwen_ingpo_tree_MATH.jsonnet" in line
+    )
+    assert config_arg.index(
+        "polIter_deepseekR1Qwen_ingpo_tree_MATH.jsonnet"
+    ) < config_arg.index("local/math_local_10.jsonnet")
+    assert config_arg.index(
+        "local/math_local_10.jsonnet"
+    ) < config_arg.index("local/math_local_runtime.jsonnet")
+    assert config_arg.index(
+        "local/math_local_runtime.jsonnet"
+    ) < config_arg.index("evaluation/select_pipelines.jsonnet")
+    assert "ARG=--debug_mode=true" in result.stdout
+    assert "ARG=--last_policy_path" in result.stdout
+    assert "ARG=/tmp/checkpoint/hf_pretrained" in result.stdout
+
+    default_result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "evaluate.sh"),
+            "polIter_deepseekR1Qwen_ingpo_tree_MATH",
+            "/tmp/checkpoint/hf_pretrained",
+            "--debug_mode=true",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "APP_EVAL_PIPELINES=" in default_result.stdout
+    assert "Selected evaluation pipelines:" not in default_result.stdout
+    assert "select_pipelines.jsonnet" not in default_result.stdout
+
+
+def test_evaluate_script_runs_all_experiment_checkpoints_sequentially(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_deepspeed = fake_bin / "deepspeed"
+    fake_deepspeed.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo \"APP_EXPERIMENT_NAME=${APP_EXPERIMENT_NAME:-}\"\n"
+        "echo \"APP_EVAL_TOKENIZER=${APP_EVAL_TOKENIZER:-}\"\n"
+        "echo \"APP_EVAL_CONTEXT_LENGTH=${APP_EVAL_CONTEXT_LENGTH:-}\"\n"
+        "echo \"APP_EVAL_MAX_NEW_TOKENS=${APP_EVAL_MAX_NEW_TOKENS:-}\"\n"
+        "printf 'ARG=%s\\n' \"$@\"\n"
+    )
+    fake_deepspeed.chmod(0o755)
+
+    experiment = tmp_path / "training-run"
+    first = experiment / "checkpoints" / "ckpt--iter_0001" / "hf_pretrained"
+    second = experiment / "checkpoints" / "ckpt--iter_0010" / "hf_pretrained"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["APP_DIRECTORY"] = str(tmp_path / "eval-results")
+    env["APP_EXPERIMENT_NAME"] = "checkpoint-sweep"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "evaluate.sh"),
+            "polIter_deepseekR1Qwen_ingpo_tree_MATH",
+            str(experiment),
+            "--all-checkpoints",
+            "--tokenizer",
+            "HuggingFaceTB/SmolLM2-135M",
+            "--context-length",
+            "4096",
+            "--max-new-tokens",
+            "1024",
+            "--dataset",
+            "aime24",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert result.stdout.count("Evaluating checkpoint ") == 2
+    assert str(first) in result.stdout
+    assert str(second) in result.stdout
+    assert "APP_EXPERIMENT_NAME=checkpoint-sweep-001-ckpt--iter_0001" in result.stdout
+    assert "APP_EXPERIMENT_NAME=checkpoint-sweep-002-ckpt--iter_0010" in result.stdout
+    assert result.stdout.count(
+        "APP_EVAL_TOKENIZER=HuggingFaceTB/SmolLM2-135M"
+    ) == 2
+    assert result.stdout.count("APP_EVAL_CONTEXT_LENGTH=4096") == 2
+    assert result.stdout.count("APP_EVAL_MAX_NEW_TOKENS=1024") == 2
+    assert result.stdout.count("cli_overrides.jsonnet") == 2
