@@ -159,6 +159,15 @@ Mỗi config experiment ghép từ các lớp overlay:
 
 Để tạo experiment mới, copy một `polIter_*.jsonnet` đã có rồi đổi các overlay.
 
+Mỗi model/config vẫn giữ context mặc định riêng. Có thể override đồng bộ cho
+mọi model và giải thuật bằng biến môi trường `APP_MAX_MODEL_LEN`. Override được
+áp dụng sau khi merge Jsonnet cho các giới hạn sequence/trainer, context của
+node expander và tất cả vLLM server (train, evaluation, analyzer):
+
+```bash
+APP_MAX_MODEL_LEN=4096 bash scripts/train_ingpo_tree_deepseekR1Qwen_MATH.sh
+```
+
 ## InGPO — chi tiết thuật toán
 
 InGPO hiện dùng `budget_allocation`: TV probes estimate reward variance cho frontier nodes, rồi phân bổ branch budget theo variance.

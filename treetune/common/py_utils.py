@@ -12,6 +12,45 @@ from typing import Dict, Any, List, Optional
 from treetune.common import JsonDict
 
 
+_MODEL_LENGTH_KEYS = {
+    "max_model_len",
+    "model_context_size",
+    "max_sequence_length",
+    "max_seq_len",
+}
+
+
+def apply_max_model_len_override(config: JsonDict, raw_value: Optional[str]) -> JsonDict:
+    """Apply APP_MAX_MODEL_LEN consistently across a fully rendered config."""
+    if raw_value is None:
+        return config
+
+    try:
+        max_model_len = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("APP_MAX_MODEL_LEN must be a positive integer") from exc
+    if max_model_len <= 0:
+        raise ValueError("APP_MAX_MODEL_LEN must be a positive integer")
+
+    def apply(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in _MODEL_LENGTH_KEYS:
+                    value[key] = max_model_len
+                else:
+                    apply(child)
+
+                if key == "vllm_server" or key.endswith("_vllm_server"):
+                    if isinstance(value[key], dict):
+                        value[key]["max_model_len"] = max_model_len
+        elif isinstance(value, list):
+            for item in value:
+                apply(item)
+
+    apply(config)
+    return config
+
+
 # def unique_experiment_name(config):
 #     configs = "_".join(
 #         [os.path.splitext(os.path.basename(p))[0] for p in config.config_filenames]
@@ -180,6 +219,7 @@ def load_config_object(filenames: List[str]) -> JsonDict:
     jsonnet_str = "+".join([f'(import "{f}")' for f in filenames])
     json_str = _jsonnet.evaluate_snippet("snippet", jsonnet_str, ext_vars=ext_vars)
     config: Dict[str, Any] = json.loads(json_str)
+    apply_max_model_len_override(config, os.environ.get("APP_MAX_MODEL_LEN"))
     config["config_filenames"] = filenames
     return config
 
@@ -206,6 +246,7 @@ def load_jsonnet_config(config_paths: List[str]) -> JsonDict:
     jsonnet_str = "+".join([f'(import "{f}")' for f in config_paths])
     json_str = _jsonnet.evaluate_snippet("snippet", jsonnet_str, ext_vars=ext_vars)
     config: Dict[str, Any] = json.loads(json_str)
+    apply_max_model_len_override(config, os.environ.get("APP_MAX_MODEL_LEN"))
 
     # Override the root directory, if an environment variable is set.
     orig_directory = config.get("directory", "experiments")
@@ -432,4 +473,3 @@ def find_n_free_ports(
 
     time.sleep(2)
     return ports
-
