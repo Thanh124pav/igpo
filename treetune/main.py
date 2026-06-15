@@ -111,6 +111,9 @@ class EntryPoint(object):
         jsonnet_str = "+".join([f'(import "{f}")' for f in config_paths])
         json_str = _jsonnet.evaluate_snippet("snippet", jsonnet_str, ext_vars=ext_vars)
         config: Dict[str, Any] = json.loads(json_str)
+        from treetune.common.py_utils import apply_max_model_len_override
+
+        apply_max_model_len_override(config, os.environ.get("APP_MAX_MODEL_LEN"))
 
         # Override the root directory, if an environment variable is set.
         orig_directory = config.get("directory", "experiments")
