@@ -99,6 +99,49 @@ def test_per_depth_action_counts():
     assert out["ingpo/depth_2/prune_rate"] == 0.5
 
 
+def test_budget_branch_factor_distribution_stats():
+    tree = {
+        "ingpo_algorithm_mode": "budget_allocation",
+        "ingpo_depth": 0,
+        "ingpo_allocated_branch_factor": 2,
+        "ingpo_requested_node_budget_by_depth": {0: 18, 1: 7, 2: 5},
+        "children": [
+            {
+                "ingpo_depth": 0,
+                "ingpo_allocated_branch_factor": 6,
+                "children": [],
+            },
+            {
+                "ingpo_depth": 0,
+                "ingpo_allocated_branch_factor": 10,
+                "children": [],
+            },
+            {
+                "ingpo_depth": 1,
+                "ingpo_allocated_branch_factor": 7,
+                "children": [],
+            },
+        ],
+    }
+
+    out = per_depth_action_counts(tree)
+
+    assert out["ingpo/depth_0/allocated_branch_factor_mean"] == 6.0
+    assert out["ingpo/depth_0/allocated_branch_factor_min"] == 2.0
+    assert out["ingpo/depth_0/allocated_branch_factor_max"] == 10.0
+    assert out["ingpo/depth_0/allocated_branch_factor_std"] > 0.0
+
+    assert out["ingpo/depth_1/allocated_branch_factor_mean"] == 7.0
+    assert out["ingpo/depth_1/allocated_branch_factor_min"] == 7.0
+    assert out["ingpo/depth_1/allocated_branch_factor_max"] == 7.0
+    assert out["ingpo/depth_1/allocated_branch_factor_std"] == 0.0
+
+    assert out["ingpo/depth_2/allocated_branch_factor_mean"] == 0.0
+    assert out["ingpo/depth_2/allocated_branch_factor_min"] == 0.0
+    assert out["ingpo/depth_2/allocated_branch_factor_max"] == 0.0
+    assert out["ingpo/depth_2/allocated_branch_factor_std"] == 0.0
+
+
 def test_collect_demo_rows_picks_share_and_prune():
     tree, index = make_tree()
     rows = collect_demo_rows(tree, index, question_id="q-7", n_each=4)

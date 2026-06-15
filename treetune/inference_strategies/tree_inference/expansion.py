@@ -275,19 +275,10 @@ class EfficientIIDExpander(NodeExpander):
     ):
         super().__init__(**kwargs)
 
-        # if "logprobs" not in program_kwargs:
-        #     program_kwargs["logprobs"] = 0
-        # else:
-        #     assert program_kwargs["logprobs"] in [0, 1], "logprobs must be 0 or 1"
-
-        # For simplicity, we just always set logprobs to 1
         if "logprobs" not in program_kwargs:
             program_kwargs["logprobs"] = 0
-
-        program_kwargs["logprobs"] = 0
-
-        # else:
-        #     assert program_kwargs["logprobs"] == 1, "logprobs must be 1"
+        else:
+            assert program_kwargs["logprobs"] in [0, 1], "logprobs must be 0 or 1"
 
         if "num_samples" in program_kwargs:
             program_kwargs.pop("num_samples")
@@ -370,23 +361,26 @@ class EfficientIIDExpander(NodeExpander):
         finish_reasons = variables.get("chain_of_thought_finish_reason")
         if finish_reasons is None:
             finish_reasons = [None] * branch_factor if branch_factor > 1 else None
-        # logprobs =  variables["chain_of_thought_logprobs"]
-        # tokens = variables["chain_of_thought_tokens"]
-
-        # assert len(logprobs) == len(tokens)
-
         if branch_factor > 1:
             assert len(generated_chain_of_thoughts) == branch_factor
             assert len(finish_reasons) == branch_factor
         else:
             generated_chain_of_thoughts = [generated_chain_of_thoughts]
             finish_reasons = [finish_reasons]
-            # logprobs = [logprobs]
-            # tokens = [tokens]
+
+        logprobs_per_node = None
+        if (
+            self.program_kwargs["logprobs"] > 0
+            and "chain_of_thought_logprobs" in variables
+        ):
+            raw_logprobs = variables["chain_of_thought_logprobs"]
+            logprobs_per_node = (
+                raw_logprobs if branch_factor > 1 else [raw_logprobs]
+            )
 
         nodes = []
-        for chain_of_thought, finish_reason in zip(
-            generated_chain_of_thoughts, finish_reasons
+        for index, (chain_of_thought, finish_reason) in enumerate(
+            zip(generated_chain_of_thoughts, finish_reasons)
         ):
             node_text = self.node_text_template.format(
                 chain_of_thought=chain_of_thought
@@ -401,9 +395,12 @@ class EfficientIIDExpander(NodeExpander):
                 "full_text": full_text,  # prompt + model response
                 "stop_text": None,  # not used
                 "finish_reason": finish_reason,  # `length` means truncated
-                # "logprob": logprob,
-                # "tokens": token
             }
+            if logprobs_per_node is not None and index < len(logprobs_per_node):
+                logprobs = logprobs_per_node[index]
+                if isinstance(logprobs, list) and logprobs:
+                    node["sum_logprobs"] = float(sum(logprobs))
+                    node["num_tokens"] = len(logprobs)
             nodes.append(node)
 
         return nodes
@@ -601,9 +598,19 @@ class EfficientIIDExpanderForTree(EfficientIIDExpander):
             generated_chain_of_thoughts = [generated_chain_of_thoughts]
             finish_reasons = [finish_reasons]
 
+        logprobs_per_node = None
+        if (
+            self.program_kwargs["logprobs"] > 0
+            and "chain_of_thought_logprobs" in variables
+        ):
+            raw_logprobs = variables["chain_of_thought_logprobs"]
+            logprobs_per_node = (
+                raw_logprobs if branch_factor > 1 else [raw_logprobs]
+            )
+
         nodes = []
-        for chain_of_thought, finish_reason in zip(
-            generated_chain_of_thoughts, finish_reasons
+        for index, (chain_of_thought, finish_reason) in enumerate(
+            zip(generated_chain_of_thoughts, finish_reasons)
         ):
             node_text = self.node_text_template.format(
                 chain_of_thought=chain_of_thought
@@ -623,6 +630,11 @@ class EfficientIIDExpanderForTree(EfficientIIDExpander):
                 ),
                 "finish_reason": finish_reason,
             }
+            if logprobs_per_node is not None and index < len(logprobs_per_node):
+                logprobs = logprobs_per_node[index]
+                if isinstance(logprobs, list) and logprobs:
+                    node["sum_logprobs"] = float(sum(logprobs))
+                    node["num_tokens"] = len(logprobs)
             nodes.append(node)
 
         return nodes

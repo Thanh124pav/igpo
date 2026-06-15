@@ -8,7 +8,7 @@ ENABLE_PREFIX_CACHING=false
 DISABLE_SLIDING_WINDOW=false
 DISABLE_FRONTEND_MULTIPROCESSING=false
 MAX_MODEL_LEN=""
-DTYPE="${VLLM_DTYPE:-}"
+DTYPE="${VLLM_DTYPE:-auto}"
 
 # Parse named parameters
 while [[ "$#" -gt 0 ]]; do
@@ -42,15 +42,7 @@ ARGS=(
 )
 
 if [ -z "$DTYPE" ]; then
-    DTYPE="$(python3 - <<'PY'
-import os
-import torch
-
-gpu_idx = int(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0])
-major, _minor = torch.cuda.get_device_capability(gpu_idx)
-print("bfloat16" if major >= 8 else "half")
-PY
-)"
+    DTYPE=auto
 fi
 ARGS+=(--dtype "$DTYPE")
 

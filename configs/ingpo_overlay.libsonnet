@@ -20,7 +20,9 @@
     inference_strategy+: {
       type: 'ingpo',
       node_expander+: {
-        store_logprobs: true,
+        program_kwargs+: {
+          logprobs: 1,
+        },
       },
       ingpo_K: $.ingpo.K,
       ingpo_m: $.ingpo.m,

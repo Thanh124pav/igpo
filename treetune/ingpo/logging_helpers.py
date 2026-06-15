@@ -148,9 +148,9 @@ def per_depth_action_counts(tree) -> Dict[str, float]:
     """Return per-depth InGPO metrics.
 
     Budget-allocation runs log SPO-compatible budget utilization by expansion
-    depth: std of allocated branch factors across parent nodes, built child
-    nodes, and built/budget ratios.  Legacy SHARE/PRUNE counts are emitted only
-    for share-prune mode.
+    depth: distribution statistics for allocated branch factors across parent
+    nodes, built child nodes, and built/budget ratios. Legacy SHARE/PRUNE counts
+    are emitted only for share-prune mode.
     """
 
     if _is_budget_allocation_tree(tree):
@@ -191,6 +191,17 @@ def per_depth_action_counts(tree) -> Dict[str, float]:
             built = int(built_by_depth.get(depth, 0))
             out[f"ingpo/depth_{depth}/budget_parent_nodes"] = int(
                 parent_count_by_depth.get(depth, 0)
+            )
+            out[f"ingpo/depth_{depth}/allocated_branch_factor_mean"] = (
+                float(sum(branch_factors) / len(branch_factors))
+                if branch_factors
+                else 0.0
+            )
+            out[f"ingpo/depth_{depth}/allocated_branch_factor_min"] = (
+                float(min(branch_factors)) if branch_factors else 0.0
+            )
+            out[f"ingpo/depth_{depth}/allocated_branch_factor_max"] = (
+                float(max(branch_factors)) if branch_factors else 0.0
             )
             out[f"ingpo/depth_{depth}/allocated_branch_factor_std"] = (
                 float(pstdev(branch_factors)) if len(branch_factors) > 1 else 0.0

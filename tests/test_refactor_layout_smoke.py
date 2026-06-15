@@ -81,4 +81,17 @@ def test_ingpo_defaults_use_budget_allocation_not_share_prune():
         "ingpo_score_retry_backoff_seconds: $.ingpo.score_retry_backoff_seconds"
         in overlay
     )
-    assert "store_logprobs: true" in overlay
+    assert "store_logprobs" not in overlay
+    assert "program_kwargs+:" in overlay
+    assert "logprobs: 1" in overlay
+
+
+def test_all_training_runs_disable_dataset_sampling_with_replacement():
+    common_script = (ROOT / "scripts" / "_common.sh").read_text()
+    no_replacement_config = (
+        ROOT / "configs" / "episode_generators" / "noSamplRplc.jsonnet"
+    ).read_text()
+
+    assert "noSamplRplc.jsonnet" in common_script
+    assert 'resolved_cfgs+=",${no_sample_replacement_config}"' in common_script
+    assert "dataset_sample_with_replacement: false" in no_replacement_config

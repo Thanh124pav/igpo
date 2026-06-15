@@ -9,7 +9,7 @@
 #   TREE=6666    -> depth 4, M=500
 #   TREE=8888    -> depth 4, M=500 (auto-generated)
 #   TREE=3456    -> depth 4, M=500 (auto-generated; mixed widths)
-# Override the auto M with TREE_M=<int>.
+# Override M for any tree config with TREE_M=<positive-int>.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 

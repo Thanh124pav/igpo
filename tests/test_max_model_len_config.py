@@ -74,6 +74,15 @@ def test_max_model_len_overrides_all_models_algorithms_and_vllm_servers():
     ] == 8192
 
 
+def test_max_model_len_adds_missing_trainer_limit():
+    config = _representative_config()
+    del config["trainer"]["general_training_args"]["max_seq_len"]
+
+    apply_max_model_len_override(config, "4096")
+
+    assert config["trainer"]["general_training_args"]["max_seq_len"] == 4096
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "abc", "1.5"])
 def test_max_model_len_rejects_invalid_values(value):
     with pytest.raises(

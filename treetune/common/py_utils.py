@@ -48,6 +48,13 @@ def apply_max_model_len_override(config: JsonDict, raw_value: Optional[str]) -> 
                 apply(item)
 
     apply(config)
+
+    trainer = config.get("trainer")
+    if isinstance(trainer, dict):
+        general_training_args = trainer.setdefault("general_training_args", {})
+        if isinstance(general_training_args, dict):
+            general_training_args["max_seq_len"] = max_model_len
+
     return config
 
 

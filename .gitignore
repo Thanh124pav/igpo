@@ -11,6 +11,7 @@ experiments/
 wandb/
 data/
 local/
+third_party/
 *.swp
 .DS_Store
 

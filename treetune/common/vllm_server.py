@@ -385,18 +385,20 @@ class VLLMServer(FromParams):
 
         vllm_processes = [
             (pid, command)
-            for pid in pids
-            if (command := self._pid_command(pid)) and "vllm" in command.lower()
+            for pid in gpu_pids
+            if pid in owned_pids
+            and (command := self._pid_command(pid))
+            and "vllm" in command.lower()
         ]
         vllm_pids = [pid for pid, _ in vllm_processes]
         skipped_processes = [
             (pid, command)
-            for pid in pids
+            for pid in gpu_pids
             if pid not in set(vllm_pids) and (command := self._pid_command(pid))
         ]
         if skipped_processes:
             logger.info(
-                f"Skipping non-vLLM process(es) still on GPU {gpu_idx}: "
+                f"Skipping non-owned or non-vLLM process(es) still on GPU {gpu_idx}: "
                 f"{[(pid, command[:80]) for pid, command in skipped_processes]}"
             )
 
