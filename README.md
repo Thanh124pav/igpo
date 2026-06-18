@@ -130,6 +130,17 @@ bash scripts/evaluate.sh \
     --context-length 4096 \
     --datasets aime24,aime25
 
+
+# Eval các checkpoint theo template iteration. Placeholder Python trong {...}
+# được tính với biến it; biểu thức boolean vừa filter iteration vừa render thành it.
+APP_EXPERIMENT_NAME=eval-training-pattern \
+bash scripts/evaluate.sh \
+    polIter_deepseekR1Qwen_ingpo_tree_MATH \
+    experiments/ingpo-tree-666-deepseekR1Qwen-math/checkpoints/ckpt--iter_0/hf_pretrained \
+    --checkpoint-template 'experiments/ingpo-tree-666-deepseekR1Qwen-math/checkpoints/ckpt--iter_{it%10==0}--epoch_1.00--step_{it*4}/hf_pretrained' \
+    --checkpoint-iters 10:100 \
+    --datasets aime24,aime25
+
 # Xem danh sách alias
 bash scripts/evaluate.sh --list-datasets
 ```
