@@ -22,7 +22,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/evaluate.sh <config[,override...]> <model_or_checkpoint> \
+  bash scripts/evaluate.sh <config[,override...]> [model_or_checkpoint] \
     [options] [treetune args]
 
 Config options:
@@ -42,6 +42,8 @@ Runtime override options:
   --top-p FLOAT          Override nucleus sampling top-p for eval generation.
 
 Checkpoint options:
+  model_or_checkpoint    Optional when --checkpoint, --checkpoint-glob, or
+                          --checkpoint-template supplies checkpoint(s).
   --checkpoint PATH       Append another model/checkpoint. Repeat as needed.
   --checkpoint-glob GLOB  Append checkpoints matching a quoted shell glob.
   --checkpoint-template TEMPLATE
@@ -251,8 +253,12 @@ if [[ "${1:-}" == "--list-datasets" ]]; then
 fi
 
 CONFIG_SPEC="${1:?$(usage >&2)}"
-LAST_POLICY="${2:?missing last_policy_path}"
-shift 2 || true
+shift
+LAST_POLICY=""
+if [[ $# -gt 0 && "$1" != -* ]]; then
+  LAST_POLICY="$1"
+  shift
+fi
 
 CONFIG_PATHS=()
 SELECTED_PIPELINES=()
@@ -482,6 +488,10 @@ BASE_EXP_NAME="${APP_EXPERIMENT_NAME:-eval-${BASE_CONFIG_NAME}}"
 CHECKPOINTS=()
 
 if [[ "${ALL_CHECKPOINTS}" == "1" ]]; then
+  [[ -n "${LAST_POLICY}" ]] || {
+    echo "--all-checkpoints requires a positional experiment directory" >&2
+    exit 2
+  }
   CHECKPOINT_ROOT="${LAST_POLICY%/}"
   if [[ -d "${CHECKPOINT_ROOT}/checkpoints" ]]; then
     CHECKPOINT_ROOT="${CHECKPOINT_ROOT}/checkpoints"
@@ -503,7 +513,9 @@ if [[ "${ALL_CHECKPOINTS}" == "1" ]]; then
     exit 2
   }
 else
-  CHECKPOINTS+=("${LAST_POLICY}")
+  if [[ -n "${LAST_POLICY}" ]]; then
+    CHECKPOINTS+=("${LAST_POLICY}")
+  fi
 fi
 
 CHECKPOINTS+=("${EXTRA_CHECKPOINTS[@]}")
@@ -523,6 +535,11 @@ for checkpoint_template in "${CHECKPOINT_TEMPLATES[@]}"; do
   }
   CHECKPOINTS+=("${template_matches[@]}")
 done
+
+[[ ${#CHECKPOINTS[@]} -gt 0 ]] || {
+  echo "No checkpoint/model supplied. Provide model_or_checkpoint, --checkpoint, --checkpoint-glob, or --checkpoint-template." >&2
+  exit 2
+}
 
 for index in "${!CHECKPOINTS[@]}"; do
   checkpoint="$(resolve_checkpoint_path "${CHECKPOINTS[$index]}")"

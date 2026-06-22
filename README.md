@@ -136,7 +136,6 @@ bash scripts/evaluate.sh \
 APP_EXPERIMENT_NAME=eval-training-pattern \
 bash scripts/evaluate.sh \
     polIter_deepseekR1Qwen_ingpo_tree_MATH \
-    experiments/ingpo-tree-666-deepseekR1Qwen-math/checkpoints/ckpt--iter_0/hf_pretrained \
     --checkpoint-template 'experiments/ingpo-tree-666-deepseekR1Qwen-math/checkpoints/ckpt--iter_{it%10==0}--epoch_1.00--step_{it*4}/hf_pretrained' \
     --checkpoint-iters 10:100 \
     --datasets aime24,aime25

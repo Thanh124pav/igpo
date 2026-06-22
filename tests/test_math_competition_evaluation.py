@@ -471,7 +471,6 @@ def test_evaluate_script_renders_checkpoint_template(tmp_path):
             "bash",
             str(ROOT / "scripts" / "evaluate.sh"),
             "polIter_deepseekR1Qwen_ingpo_tree_MATH",
-            "ignored-base-model",
             "--checkpoint-template",
             template,
             "--checkpoint-iters",
@@ -486,8 +485,7 @@ def test_evaluate_script_renders_checkpoint_template(tmp_path):
         check=True,
     )
 
-    assert result.stdout.count("Evaluating checkpoint ") == 2
+    assert result.stdout.count("Evaluating checkpoint ") == 1
     assert "ckpt--iter_10--epoch_1.00--step_40" in result.stdout
     assert "  iteration=10" in result.stdout
     assert "ARG=10" in result.stdout
-    assert "ARG=ignored-base-model" in result.stdout
