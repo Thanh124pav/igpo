@@ -37,7 +37,12 @@ class EntryPoint(object):
     _runtime = None
     _config = None
 
-    def __init__(self, configs: str, debug_mode: bool = None):
+    def __init__(
+        self,
+        configs: str,
+        debug_mode: bool = None,
+        local_rank: int = None,
+    ):
         # Lazy import to avoid long startup time.
         from treetune import logging_utils
 

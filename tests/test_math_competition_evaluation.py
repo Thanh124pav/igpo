@@ -383,6 +383,9 @@ def test_evaluate_script_runs_all_experiment_checkpoints_sequentially(tmp_path):
         "echo \"APP_EVAL_TOKENIZER=${APP_EVAL_TOKENIZER:-}\"\n"
         "echo \"APP_EVAL_CONTEXT_LENGTH=${APP_EVAL_CONTEXT_LENGTH:-}\"\n"
         "echo \"APP_EVAL_MAX_NEW_TOKENS=${APP_EVAL_MAX_NEW_TOKENS:-}\"\n"
+        "echo \"APP_EVAL_NUM_SAMPLES=${APP_EVAL_NUM_SAMPLES:-}\"\n"
+        "echo \"APP_EVAL_TEMPERATURE=${APP_EVAL_TEMPERATURE:-}\"\n"
+        "echo \"APP_EVAL_TOP_P=${APP_EVAL_TOP_P:-}\"\n"
         "printf 'ARG=%s\\n' \"$@\"\n"
     )
     fake_deepspeed.chmod(0o755)
@@ -411,6 +414,12 @@ def test_evaluate_script_runs_all_experiment_checkpoints_sequentially(tmp_path):
             "4096",
             "--max-new-tokens",
             "1024",
+            "--num-samples",
+            "16",
+            "--temperature",
+            "0.7",
+            "--top-p",
+            "0.95",
             "--dataset",
             "aime24",
         ],
@@ -424,11 +433,58 @@ def test_evaluate_script_runs_all_experiment_checkpoints_sequentially(tmp_path):
     assert result.stdout.count("Evaluating checkpoint ") == 2
     assert str(first) in result.stdout
     assert str(second) in result.stdout
-    assert "APP_EXPERIMENT_NAME=checkpoint-sweep-001-ckpt--iter_0001" in result.stdout
-    assert "APP_EXPERIMENT_NAME=checkpoint-sweep-002-ckpt--iter_0010" in result.stdout
+    assert result.stdout.count("APP_EXPERIMENT_NAME=checkpoint-sweep") == 2
     assert result.stdout.count(
         "APP_EVAL_TOKENIZER=HuggingFaceTB/SmolLM2-135M"
     ) == 2
     assert result.stdout.count("APP_EVAL_CONTEXT_LENGTH=4096") == 2
     assert result.stdout.count("APP_EVAL_MAX_NEW_TOKENS=1024") == 2
+    assert result.stdout.count("APP_EVAL_NUM_SAMPLES=16") == 2
+    assert result.stdout.count("APP_EVAL_TEMPERATURE=0.7") == 2
+    assert result.stdout.count("APP_EVAL_TOP_P=0.95") == 2
     assert result.stdout.count("cli_overrides.jsonnet") == 2
+    assert "  iteration=1" in result.stdout
+    assert "ARG=1" in result.stdout
+    assert "  iteration=10" in result.stdout
+    assert "ARG=10" in result.stdout
+
+
+def test_evaluate_script_renders_checkpoint_template(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_deepspeed = fake_bin / "deepspeed"
+    fake_deepspeed.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo \"APP_EXPERIMENT_NAME=${APP_EXPERIMENT_NAME:-}\"\n"
+        "printf 'ARG=%s\\n' \"$@\"\n"
+    )
+    fake_deepspeed.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["APP_EXPERIMENT_NAME"] = "template-sweep"
+
+    template = str(tmp_path / "ckpt--iter_{it%10==0}--epoch_1.00--step_{it*4}")
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "evaluate.sh"),
+            "polIter_deepseekR1Qwen_ingpo_tree_MATH",
+            "--checkpoint-template",
+            template,
+            "--checkpoint-iters",
+            "8:12",
+            "--dataset",
+            "aime24",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert result.stdout.count("Evaluating checkpoint ") == 1
+    assert "ckpt--iter_10--epoch_1.00--step_40" in result.stdout
+    assert "  iteration=10" in result.stdout
+    assert "ARG=10" in result.stdout

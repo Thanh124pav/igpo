@@ -383,7 +383,12 @@ class PolicyIterationRuntime(DistributedRuntime):
 
         logger.info("Finished policy iteration loop")
 
-    def evaluate(self, iteration: int, last_policy_path: Path):
+    def evaluate(
+        self,
+        iteration: int,
+        last_policy_path: Path,
+        local_rank: int = None,
+    ):
         evaluation_root_dir = self.exp_root / "evaluation" / f"iteration__{iteration}"
         evaluation_root_dir.mkdir(exist_ok=True, parents=True)
 
