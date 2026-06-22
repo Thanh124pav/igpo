@@ -545,15 +545,11 @@ for index in "${!CHECKPOINTS[@]}"; do
   checkpoint="$(resolve_checkpoint_path "${CHECKPOINTS[$index]}")"
   label="$(checkpoint_label "${checkpoint}")"
   iteration="$(checkpoint_iteration "${checkpoint}")"
-  if [[ ${#CHECKPOINTS[@]} -eq 1 ]]; then
-    exp_name="${BASE_EXP_NAME}"
-  else
-    printf -v run_number '%03d' "$((index + 1))"
-    exp_name="${BASE_EXP_NAME}-${run_number}-${label}"
-  fi
+  exp_name="${BASE_EXP_NAME}"
 
   echo "Evaluating checkpoint $((index + 1))/${#CHECKPOINTS[@]}:"
   echo "  model=${checkpoint}"
+  echo "  label=${label}"
   echo "  iteration=${iteration}"
   echo "  experiment=${exp_name}"
   ingpo_eval \

@@ -433,8 +433,7 @@ def test_evaluate_script_runs_all_experiment_checkpoints_sequentially(tmp_path):
     assert result.stdout.count("Evaluating checkpoint ") == 2
     assert str(first) in result.stdout
     assert str(second) in result.stdout
-    assert "APP_EXPERIMENT_NAME=checkpoint-sweep-001-ckpt--iter_0001" in result.stdout
-    assert "APP_EXPERIMENT_NAME=checkpoint-sweep-002-ckpt--iter_0010" in result.stdout
+    assert result.stdout.count("APP_EXPERIMENT_NAME=checkpoint-sweep") == 2
     assert result.stdout.count(
         "APP_EVAL_TOKENIZER=HuggingFaceTB/SmolLM2-135M"
     ) == 2
