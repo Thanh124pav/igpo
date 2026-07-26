@@ -231,6 +231,7 @@ ingpo_eval() {
   local exp_name="$1"; shift
   local cfgs="$1"; shift
   local last_policy="$1"; shift
+  local iteration="${1:-0}"; shift || true
   local gpu_config
   gpu_config="$(ensure_gpu_config "${INGPO_FIRST_GPU}")"
   WANDB_PROJECT="${WANDB_PROJECT}" \
@@ -239,7 +240,7 @@ ingpo_eval() {
     "${INGPO_ROOT}/treetune/main.py" \
     --configs "${cfgs},${gpu_config}" \
     "$@" \
-    evaluate --iteration 0 --last_policy_path "${last_policy}"
+    evaluate --iteration "${iteration}" --last_policy_path "${last_policy}"
 }
 
 # ensure_tree_config <shape>

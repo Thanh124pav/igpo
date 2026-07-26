@@ -130,6 +130,14 @@ bash scripts/evaluate.sh \
     --context-length 4096 \
     --datasets aime24,aime25
 
+# Eval một subset checkpoint bằng glob relative từ experiment root
+APP_EXPERIMENT_NAME=eval-every-10 \
+bash scripts/evaluate.sh \
+    polIter_deepseekR1Qwen_ingpo_tree_MATH \
+    experiments/ingpo-tree-666-deepseekR1Qwen-math \
+    --checkpoint-glob 'checkpoints/iteration_*0/hf_pretrained' \
+    --datasets aime24,aime25
+
 # Xem danh sách alias
 bash scripts/evaluate.sh --list-datasets
 ```
@@ -137,10 +145,11 @@ bash scripts/evaluate.sh --list-datasets
 Nếu không truyền `--dataset` hoặc `--datasets`, script vẫn chạy toàn bộ
 `inference_pipelines` trong config như trước.
 
-Sau mỗi dataset, metric được in lên terminal và append vào:
+Khi evaluate checkpoint path dạng `iteration_0010/hf_pretrained`, script tự detect
+iteration là `10` và ghi chung dưới một eval experiment:
 
 ```text
-experiments/<eval-name>/evaluation/iteration__0/evaluation_results.jsonl
+experiments/<eval-name>/evaluation/iteration__10/evaluation_results.jsonl
 ```
 
 ## Compose configs

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Evaluate a trained checkpoint, optionally selecting inference pipelines.
 # Usage:
-#   bash scripts/evaluate.sh <config[,override...]> <model_or_checkpoint> \
+#   bash scripts/evaluate.sh <config[,override...]> <model_or_checkpoint_or_experiment> \
 #     [--config <override>]... \
 #     [--dataset <name>]... [--datasets <name1,name2>] [extra args...]
 #
@@ -22,7 +22,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/evaluate.sh <config[,override...]> <model_or_checkpoint> \
+  bash scripts/evaluate.sh <config[,override...]> <model_or_checkpoint_or_experiment> \
     [options] [treetune args]
 
 Config options:
@@ -41,6 +41,8 @@ Runtime override options:
 Checkpoint options:
   --checkpoint PATH       Append another model/checkpoint. Repeat as needed.
   --checkpoint-glob GLOB  Append checkpoints matching a quoted shell glob.
+                          Relative globs are resolved from the positional
+                          experiment/root path if they do not match as-is.
   --all-checkpoints       Treat the positional path as an experiment directory
                           and evaluate checkpoints/*/hf_pretrained in order.
 
@@ -160,6 +162,36 @@ resolve_checkpoint_path() {
   fi
 }
 
+resolve_root_path() {
+  local root="${1%/}"
+  if [[ -d "${root}" ]]; then
+    realpath "${root}"
+  elif [[ -d "${INGPO_ROOT}/${root}" ]]; then
+    realpath "${INGPO_ROOT}/${root}"
+  else
+    echo "${root}"
+  fi
+}
+
+checkpoint_iteration() {
+  local checkpoint="${1%/}"
+  local label
+  label="$(basename "${checkpoint}")"
+  if [[ "${label}" == "hf_pretrained" ]]; then
+    label="$(basename "$(dirname "${checkpoint}")")"
+  fi
+
+  if [[ "${label}" =~ iteration_+0*([0-9]+)$ ]]; then
+    printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
+  elif [[ "${label}" =~ iteration__0*([0-9]+)$ ]]; then
+    printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
+  elif [[ "${label}" =~ checkpoint[-_]?0*([0-9]+)$ ]]; then
+    printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
+  else
+    echo 0
+  fi
+}
+
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   usage
   exit 0
@@ -170,7 +202,7 @@ if [[ "${1:-}" == "--list-datasets" ]]; then
 fi
 
 CONFIG_SPEC="${1:?$(usage >&2)}"
-LAST_POLICY="${2:?missing last_policy_path}"
+ROOT_OR_CHECKPOINT="${2:?missing model_or_checkpoint_or_experiment}"
 shift 2 || true
 
 CONFIG_PATHS=()
@@ -340,10 +372,11 @@ fi
 
 BASE_CONFIG_NAME="$(basename "${CONFIG_PATHS[0]}" .jsonnet)"
 BASE_EXP_NAME="${APP_EXPERIMENT_NAME:-eval-${BASE_CONFIG_NAME}}"
+CHECKPOINT_BASE="$(resolve_root_path "${ROOT_OR_CHECKPOINT}")"
 CHECKPOINTS=()
 
 if [[ "${ALL_CHECKPOINTS}" == "1" ]]; then
-  CHECKPOINT_ROOT="${LAST_POLICY%/}"
+  CHECKPOINT_ROOT="${CHECKPOINT_BASE%/}"
   if [[ -d "${CHECKPOINT_ROOT}/checkpoints" ]]; then
     CHECKPOINT_ROOT="${CHECKPOINT_ROOT}/checkpoints"
   fi
@@ -363,13 +396,18 @@ if [[ "${ALL_CHECKPOINTS}" == "1" ]]; then
     echo "No checkpoints/*/hf_pretrained found under ${CHECKPOINT_ROOT}" >&2
     exit 2
   }
-else
-  CHECKPOINTS+=("${LAST_POLICY}")
+elif [[ ${#CHECKPOINT_GLOBS[@]} -eq 0 ]]; then
+  CHECKPOINTS+=("${ROOT_OR_CHECKPOINT}")
 fi
 
 CHECKPOINTS+=("${EXTRA_CHECKPOINTS[@]}")
 for checkpoint_glob in "${CHECKPOINT_GLOBS[@]}"; do
   mapfile -t glob_matches < <(compgen -G "${checkpoint_glob}" | sort -V || true)
+  if [[ ${#glob_matches[@]} -eq 0 && "${checkpoint_glob}" != /* ]]; then
+    mapfile -t glob_matches < <(
+      compgen -G "${CHECKPOINT_BASE%/}/${checkpoint_glob}" | sort -V || true
+    )
+  fi
   [[ ${#glob_matches[@]} -gt 0 ]] || {
     echo "No checkpoints matched glob: ${checkpoint_glob}" >&2
     exit 2
@@ -377,22 +415,36 @@ for checkpoint_glob in "${CHECKPOINT_GLOBS[@]}"; do
   CHECKPOINTS+=("${glob_matches[@]}")
 done
 
-for index in "${!CHECKPOINTS[@]}"; do
-  checkpoint="$(resolve_checkpoint_path "${CHECKPOINTS[$index]}")"
-  if [[ ${#CHECKPOINTS[@]} -eq 1 ]]; then
-    exp_name="${BASE_EXP_NAME}"
-  else
-    label="$(checkpoint_label "${checkpoint}")"
-    printf -v run_number '%03d' "$((index + 1))"
-    exp_name="${BASE_EXP_NAME}-${run_number}-${label}"
+UNIQUE_CHECKPOINTS=()
+declare -A SEEN_CHECKPOINTS=()
+for checkpoint_candidate in "${CHECKPOINTS[@]}"; do
+  checkpoint="$(resolve_checkpoint_path "${checkpoint_candidate}")"
+  if [[ -n "${SEEN_CHECKPOINTS[${checkpoint}]:-}" ]]; then
+    continue
   fi
+  SEEN_CHECKPOINTS["${checkpoint}"]=1
+  UNIQUE_CHECKPOINTS+=("${checkpoint}")
+done
+CHECKPOINTS=("${UNIQUE_CHECKPOINTS[@]}")
+
+[[ ${#CHECKPOINTS[@]} -gt 0 ]] || {
+  echo "No checkpoints selected." >&2
+  exit 2
+}
+
+for index in "${!CHECKPOINTS[@]}"; do
+  checkpoint="${CHECKPOINTS[$index]}"
+  iteration="$(checkpoint_iteration "${checkpoint}")"
+  exp_name="${BASE_EXP_NAME}"
 
   echo "Evaluating checkpoint $((index + 1))/${#CHECKPOINTS[@]}:"
   echo "  model=${checkpoint}"
+  echo "  iteration=${iteration}"
   echo "  experiment=${exp_name}"
   ingpo_eval \
     "${exp_name}" \
     "${CFG}" \
     "${checkpoint}" \
+    "${iteration}" \
     "${PASSTHROUGH_ARGS[@]}"
 done
