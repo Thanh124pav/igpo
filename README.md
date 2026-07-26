@@ -119,6 +119,7 @@ bash scripts/evaluate.sh \
     --tokenizer HuggingFaceTB/SmolLM2-135M \
     --context-length 4096 \
     --max-new-tokens 1024 \
+    --num-samples 16 \
     --dataset aime24
 
 # Eval lần lượt mọi checkpoint trong một experiment
@@ -143,7 +144,9 @@ bash scripts/evaluate.sh --list-datasets
 ```
 
 Nếu không truyền `--dataset` hoặc `--datasets`, script vẫn chạy toàn bộ
-`inference_pipelines` trong config như trước.
+`inference_pipelines` trong config như trước. Có thể override số sample bằng
+`APP_EVAL_NUM_SAMPLES=16` hoặc `--num-samples 16`; metric sẽ log thêm
+`pass@16` và `avg@16` bên cạnh các key backward-compatible.
 
 Khi evaluate checkpoint path dạng `iteration_0010/hf_pretrained`, script tự detect
 iteration là `10` và ghi chung dưới một eval experiment:

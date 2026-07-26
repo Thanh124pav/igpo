@@ -37,6 +37,7 @@ Runtime override options:
   --tokenizer MODEL       Override tokenizer for the runtime and all pipelines.
   --context-length N      Set pipeline context size and vLLM max model length.
   --max-new-tokens N      Override the maximum generated tokens per response.
+  --num-samples N        Override generated samples per problem.
 
 Checkpoint options:
   --checkpoint PATH       Append another model/checkpoint. Repeat as needed.
@@ -212,9 +213,10 @@ SELECTED_PIPELINES=()
 PASSTHROUGH_ARGS=()
 EXTRA_CHECKPOINTS=()
 CHECKPOINT_GLOBS=()
-EVAL_TOKENIZER=""
-EVAL_CONTEXT_LENGTH=""
-EVAL_MAX_NEW_TOKENS=""
+EVAL_TOKENIZER="${APP_EVAL_TOKENIZER:-}"
+EVAL_CONTEXT_LENGTH="${APP_EVAL_CONTEXT_LENGTH:-}"
+EVAL_MAX_NEW_TOKENS="${APP_EVAL_MAX_NEW_TOKENS:-}"
+EVAL_NUM_SAMPLES="${APP_EVAL_NUM_SAMPLES:-}"
 ALL_CHECKPOINTS=0
 
 IFS=',' read -r -a initial_configs <<< "${CONFIG_SPEC}"
@@ -262,6 +264,17 @@ while [[ $# -gt 0 ]]; do
     --max-new-tokens=*)
       EVAL_MAX_NEW_TOKENS="${1#--max-new-tokens=}"
       require_positive_integer "--max-new-tokens" "${EVAL_MAX_NEW_TOKENS}"
+      shift
+      ;;
+    --num-samples)
+      [[ $# -ge 2 ]] || { echo "--num-samples requires a value" >&2; exit 2; }
+      require_positive_integer "--num-samples" "$2"
+      EVAL_NUM_SAMPLES="$2"
+      shift 2
+      ;;
+    --num-samples=*)
+      EVAL_NUM_SAMPLES="${1#--num-samples=}"
+      require_positive_integer "--num-samples" "${EVAL_NUM_SAMPLES}"
       shift
       ;;
     --checkpoint)
@@ -341,15 +354,17 @@ done
 
 CFG="$(IFS=,; echo "${CONFIG_PATHS[*]}")"
 
-if [[ -n "${EVAL_TOKENIZER}" || -n "${EVAL_CONTEXT_LENGTH}" || -n "${EVAL_MAX_NEW_TOKENS}" ]]; then
+if [[ -n "${EVAL_TOKENIZER}" || -n "${EVAL_CONTEXT_LENGTH}" || -n "${EVAL_MAX_NEW_TOKENS}" || -n "${EVAL_NUM_SAMPLES}" ]]; then
   export APP_EVAL_TOKENIZER="${EVAL_TOKENIZER}"
   export APP_EVAL_CONTEXT_LENGTH="${EVAL_CONTEXT_LENGTH}"
   export APP_EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS}"
+  export APP_EVAL_NUM_SAMPLES="${EVAL_NUM_SAMPLES}"
   CFG+=",${INGPO_ROOT}/configs/evaluation/cli_overrides.jsonnet"
   echo "Evaluation overrides:"
   [[ -n "${EVAL_TOKENIZER}" ]] && echo "  tokenizer=${EVAL_TOKENIZER}"
   [[ -n "${EVAL_CONTEXT_LENGTH}" ]] && echo "  context_length=${EVAL_CONTEXT_LENGTH}"
   [[ -n "${EVAL_MAX_NEW_TOKENS}" ]] && echo "  max_new_tokens=${EVAL_MAX_NEW_TOKENS}"
+  [[ -n "${EVAL_NUM_SAMPLES}" ]] && echo "  num_samples=${EVAL_NUM_SAMPLES}"
 fi
 
 if [[ ${#SELECTED_PIPELINES[@]} -gt 0 ]]; then

@@ -593,13 +593,17 @@ class MATH(Task):
 
         once_hit = sum(once_hit_acc) / len(once_hit_acc)
         correct_frac = sum(correct_frac) / len(correct_frac)
+        num_samples = len(predictions[0])
 
         return {
             "once_hit": once_hit,
             "exact_match": once_hit,  # for backwards compatibility
+            f"pass@{num_samples}": once_hit,
             "correct_frac": correct_frac,
             "exact_match_frac": correct_frac,  # for backwards compatibility
+            f"avg@{num_samples}": correct_frac,
             "majority_vote_acc": sum(majority_vote_acc) / len(majority_vote_acc),
+            f"majority_vote@{num_samples}": sum(majority_vote_acc) / len(majority_vote_acc),
             "unique_answer_count": sum(unique_answer_count) / len(unique_answer_count),
             "none_answer_extracted_frac_per_problem": (
                 sum(none_answer_extracted) / len(none_answer_extracted)
