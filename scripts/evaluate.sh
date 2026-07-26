@@ -185,6 +185,8 @@ checkpoint_iteration() {
     printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
   elif [[ "${label}" =~ iteration__0*([0-9]+)$ ]]; then
     printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
+  elif [[ "${label}" =~ ckpt--iter_0*([0-9]+)-- ]]; then
+    printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
   elif [[ "${label}" =~ checkpoint[-_]?0*([0-9]+)$ ]]; then
     printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
   else
