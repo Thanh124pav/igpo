@@ -33,6 +33,22 @@ def find_free_port():
 # os.environ["MASTER_PORT"] = str(find_free_port()) # DeepSpeed master port
 
 
+def _strip_deepspeed_local_rank_args(argv: List[str]) -> List[str]:
+    filtered = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--local_rank":
+            skip_next = True
+            continue
+        if arg.startswith("--local_rank="):
+            continue
+        filtered.append(arg)
+    return filtered
+
+
 class EntryPoint(object):
     _runtime = None
     _config = None
@@ -132,4 +148,5 @@ class EntryPoint(object):
 
 
 if __name__ == "__main__":
+    sys.argv = [sys.argv[0], *_strip_deepspeed_local_rank_args(sys.argv[1:])]
     fire.Fire(EntryPoint)
