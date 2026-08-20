@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Sequence
@@ -88,9 +89,11 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         ingpo_n_tv_estimates: int = 8,
         ingpo_tv_subnode_max_tokens: int = 120,
         ingpo_tv_second_phase_tokens: int = 60,
-        ingpo_tv_includes_half_factor: bool = False,
-        ingpo_budget_lambda: float = 0.02,
-        ingpo_n_min: int = 0,
+        ingpo_tv_includes_half_factor: bool = True,
+        ingpo_budget_lambda: float = 0.0,
+        ingpo_n_min: int = 1,
+        ingpo_allocation_weight_mode: str = "std",
+        ingpo_candidate_selection: str = "random",
         ingpo_budget_overhead_mode: str = "flexible",
         ingpo_budget_queue_count: int = 2,
         ingpo_budget_queue_timeout_seconds: float = 0.5,
@@ -138,6 +141,18 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         self.ingpo_tv_includes_half_factor = bool(ingpo_tv_includes_half_factor)
         self.ingpo_budget_lambda = float(ingpo_budget_lambda)
         self.ingpo_n_min = max(int(ingpo_n_min), 0)
+        if ingpo_allocation_weight_mode not in {"std", "variance"}:
+            raise ValueError(
+                "Unsupported ingpo_allocation_weight_mode: "
+                f"{ingpo_allocation_weight_mode}"
+            )
+        if ingpo_candidate_selection not in {"random", "top_logprob"}:
+            raise ValueError(
+                "Unsupported ingpo_candidate_selection: "
+                f"{ingpo_candidate_selection}"
+            )
+        self.ingpo_allocation_weight_mode = ingpo_allocation_weight_mode
+        self.ingpo_candidate_selection = ingpo_candidate_selection
         self.ingpo_budget_overhead_mode = ingpo_budget_overhead_mode
         self.ingpo_budget_queue_count = int(ingpo_budget_queue_count)
         self.ingpo_budget_queue_timeout_seconds = float(
@@ -249,6 +264,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 queue_count=self.ingpo_budget_queue_count,
                 lambda_=self.ingpo_budget_lambda,
                 n_min=self.ingpo_n_min,
+                allocation_weight_mode=self.ingpo_allocation_weight_mode,
             )
             summaries = scheduler.allocate(
                 root_nodes, total_depth_budget=total_root_budget
@@ -264,6 +280,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 total_budget=total_root_budget,
                 lambda_=self.ingpo_budget_lambda,
                 n_min=self.ingpo_n_min,
+                allocation_weight_mode=self.ingpo_allocation_weight_mode,
             )
             allocations = summary.allocations
             weights = summary.weights
@@ -1119,6 +1136,7 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                         total_budget=total_depth_budget,
                         lambda_=self.ingpo_budget_lambda,
                         n_min=self.ingpo_n_min,
+                        allocation_weight_mode=self.ingpo_allocation_weight_mode,
                     )
                     allocations = summary.allocations
                     weights = summary.weights
@@ -1136,11 +1154,23 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
                 allocated = int(allocations.get(node_id, 0))
                 node["ingpo_allocated_branch_factor"] = allocated
                 node["ingpo_budget_weight"] = float(weights.get(node_id, 0.0))
-                candidates = sorted(
-                    node.get("ingpo_budget_candidates", []),
-                    key=lambda cand: float(cand.get("sum_logprobs", 0.0) or 0.0),
-                    reverse=True,
-                )
+                candidates = list(node.get("ingpo_budget_candidates", []))
+                if self.ingpo_candidate_selection == "top_logprob":
+                    candidates.sort(
+                        key=lambda cand: float(
+                            cand.get("sum_logprobs", 0.0) or 0.0
+                        ),
+                        reverse=True,
+                    )
+                else:
+                    # The probe pool was sampled from the current policy.  A
+                    # random subset preserves that sampling distribution; top
+                    # log-prob selection would create a truncated, biased PPO
+                    # dataset without an importance correction.
+                    selection_rng = random.Random(
+                        f"{self.seed}:{node_id}:{depth}"
+                    )
+                    selection_rng.shuffle(candidates)
                 selected = candidates[:allocated]
                 if len(selected) < allocated:
                     extra_candidates = await _expand_with_budget(
@@ -1182,6 +1212,8 @@ class InGPOInferenceStrategy(HybridInferenceStrategy):
         tree["ingpo_allocation_seconds_by_depth"] = dict(allocation_seconds_by_depth)
         tree["ingpo_expansion_seconds_by_depth"] = dict(expansion_seconds_by_depth)
         tree["ingpo_budget_overhead_mode"] = self.ingpo_budget_overhead_mode
+        tree["ingpo_allocation_weight_mode"] = self.ingpo_allocation_weight_mode
+        tree["ingpo_candidate_selection"] = self.ingpo_candidate_selection
         tree["ingpo_skip_near_leaf_expand"] = self.ingpo_skip_near_leaf_expand
         tree["ingpo_root_allocation"] = self.ingpo_root_allocation
         tree_construction_seconds = time.time() - t0_tree

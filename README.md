@@ -170,7 +170,7 @@ APP_MAX_MODEL_LEN=4096 bash scripts/train_ingpo_tree_deepseekR1Qwen_MATH.sh
 
 ## InGPO — chi tiết thuật toán
 
-InGPO hiện dùng `budget_allocation`: TV probes estimate reward variance cho frontier nodes, rồi phân bổ branch budget theo variance.
+InGPO hiện dùng `budget_allocation`: TV probes tạo một **variance proxy** cho frontier nodes, rồi phân bổ branch budget theo trọng số Neyman-style. Allocator bảo toàn budget bằng largest-remainder rounding, giữ ít nhất một branch mỗi node khi còn budget, và mặc định chọn candidate ngẫu nhiên thay vì top-logprob để tránh bias dữ liệu PPO.
 
 Các path SHARE/PRUNE còn lại chỉ dùng sibling-local TV comparison; code generate lời giải tham chiếu cũ đã bị loại khỏi production path.
 
@@ -182,9 +182,12 @@ Tham số mặc định (`configs/ingpo_defaults.libsonnet`):
 | `epsilon` | 0.02 | Ngưỡng value gap cho Prune |
 | `local_value_share` | true | Chỉ dùng path local so sánh siblings; global Y path đã bị loại bỏ |
 | `demo_examples_per_tree` | 2 | Số demo budget/local gate lưu mỗi cây |
-| `budget_lambda` | 0.02 | Ngưỡng trong trọng số `sqrt(sigma_i^4 - budget_lambda)` |
-| `n_min` | 0 | Số nhánh trả về khi `sigma_i^4 - budget_lambda < 0` |
-| `skip_near_leaf_expand` | false | Budget allocation: ở depth cuối, bỏ TV/budget allocation và expand uniform theo branch factor B |
+| `budget_lambda` | 0.0 | Ngưỡng trong variance proxy trước khi lấy căn bậc hai; mặc định không loại node |
+| `n_min` | 1 | Số nhánh tối thiểu mỗi node khi còn budget |
+| `allocation_weight_mode` | `std` | Dùng trọng số Neyman-style `sqrt(max(variance - lambda, 0))` |
+| `candidate_selection` | `random` | Chọn ngẫu nhiên candidate pool để tránh bias top-logprob; `top_logprob` chỉ dùng cho ablation |
+| `tv_includes_half_factor` | true | Dùng TV chuẩn `0.5 * L1` |
+| `skip_near_leaf_expand` | true | Budget allocation: ở depth cuối, bỏ TV/budget allocation và expand uniform theo branch factor B |
 | `root_allocation` | false | Budget allocation: estimate variance ở các root trong minibatch và phân bổ branch budget depth 0 giữa các root đó |
 
 Override trong file `.jsonnet`:

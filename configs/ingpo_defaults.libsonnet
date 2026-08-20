@@ -37,9 +37,13 @@
     n_tv_estimates: 8,
     tv_subnode_max_tokens: 120,
     tv_second_phase_tokens: 60,
-    tv_includes_half_factor: false,
-    budget_lambda: 0.02,
-    n_min: 0,
+    // lambda is in variance-proxy units.  The default keeps all nodes
+    // eligible; use a positive value only as an explicit ablation.
+    budget_lambda: 0.0,
+    n_min: 1,
+    allocation_weight_mode: 'std',
+    candidate_selection: 'random',
+    tv_includes_half_factor: true,
     budget_overhead_mode: 'flexible',
     budget_queue_count: 2,
     budget_queue_timeout_seconds: 0.5,

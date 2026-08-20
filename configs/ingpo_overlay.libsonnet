@@ -50,6 +50,8 @@
       ingpo_tv_includes_half_factor: $.ingpo.tv_includes_half_factor,
       ingpo_budget_lambda: $.ingpo.budget_lambda,
       ingpo_n_min: $.ingpo.n_min,
+      ingpo_allocation_weight_mode: $.ingpo.allocation_weight_mode,
+      ingpo_candidate_selection: $.ingpo.candidate_selection,
       ingpo_budget_overhead_mode: $.ingpo.budget_overhead_mode,
       ingpo_budget_queue_count: $.ingpo.budget_queue_count,
       ingpo_budget_queue_timeout_seconds: $.ingpo.budget_queue_timeout_seconds,

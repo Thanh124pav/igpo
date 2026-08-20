@@ -64,18 +64,31 @@ def test_conditional_tv_estimator_caches_logp_matrix_scores():
     assert set(first.pair_tvs) == {(0, 1)}
 
 
-def test_pair_tvs_can_use_half_factor():
+def test_pair_tvs_use_standard_tv_by_default():
     estimator = ConditionalTVEstimator(
         scorer=FakeScorer(),
         node_expander=FakeExpander(),
         gamma=0.5,
         n_tv_estimates=2,
-        tv_includes_half_factor=True,
     )
 
     pair_tvs = estimator._pair_tvs([[1.0, 0.0], [0.0, 1.0]])
 
     assert pair_tvs[(0, 1)] == pytest.approx(1.0)
+
+
+def test_pair_tvs_can_use_legacy_l1_ablation():
+    estimator = ConditionalTVEstimator(
+        scorer=FakeScorer(),
+        node_expander=FakeExpander(),
+        gamma=0.5,
+        n_tv_estimates=2,
+        tv_includes_half_factor=False,
+    )
+
+    pair_tvs = estimator._pair_tvs([[1.0, 0.0], [0.0, 1.0]])
+
+    assert pair_tvs[(0, 1)] == pytest.approx(2.0)
 
 
 def test_estimate_for_parent_generates_subnode_samples_with_budgeted_expansion():

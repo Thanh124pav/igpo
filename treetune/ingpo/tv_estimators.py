@@ -51,7 +51,7 @@ class ConditionalTVEstimator:
         n_tv_estimates: int = 8,
         first_phase_tokens: int = 120,
         second_phase_tokens: int = 60,
-        tv_includes_half_factor: bool = False,
+        tv_includes_half_factor: bool = True,
     ):
         if mode not in {"subnode", "hierachical", "hierarchical"}:
             raise ValueError(f"Unsupported TV estimator mode: {mode}")
@@ -196,6 +196,9 @@ class ConditionalTVEstimator:
             pi = prob_matrix[i]
             for j in range(i + 1, len(prob_matrix)):
                 pj = prob_matrix[j]
+                # Total Variation is 0.5 * L1 distance.  Keep the switch only
+                # for an explicit legacy ablation; the production default is
+                # the mathematically standard definition.
                 tv = sum(abs(a - b) for a, b in zip(pi, pj))
                 if self.tv_includes_half_factor:
                     tv *= 0.5

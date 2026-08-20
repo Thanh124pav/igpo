@@ -70,11 +70,16 @@ def test_ingpo_defaults_use_budget_allocation_not_share_prune():
     assert "enable_share: false" in defaults
     assert "enable_prune: false" in defaults
     assert "skip_near_leaf_expand: true" in defaults
-    assert "n_min: 0" in defaults
+    assert "n_min: 1" in defaults
+    assert "allocation_weight_mode: 'std'" in defaults
+    assert "candidate_selection: 'random'" in defaults
+    assert "tv_includes_half_factor: true" in defaults
     assert "score_retry_attempts: 3" in defaults
     assert "score_retry_backoff_seconds: 0.5" in defaults
     assert "ingpo_algorithm_mode: $.ingpo.algorithm_mode" in overlay
     assert "ingpo_n_min: $.ingpo.n_min" in overlay
+    assert "ingpo_allocation_weight_mode: $.ingpo.allocation_weight_mode" in overlay
+    assert "ingpo_candidate_selection: $.ingpo.candidate_selection" in overlay
     assert "ingpo_tv_estimator: $.ingpo.tv_estimator" in overlay
     assert "ingpo_score_retry_attempts: $.ingpo.score_retry_attempts" in overlay
     assert (

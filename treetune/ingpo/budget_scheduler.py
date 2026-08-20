@@ -1,8 +1,5 @@
-"""Small flexible queue scheduler for budget-allocation nodes."""
-
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any, List, Sequence
 
@@ -17,25 +14,28 @@ class BudgetQueue:
 
 
 class FlexibleBudgetScheduler:
-    """Allocate ready nodes in small queues.
+    """Attach queue metadata without fragmenting the depth budget.
 
-    This synchronous scheduler models the flexible policy at allocation time:
-    ready nodes are packed into the least-loaded non-active queue and each
-    queue receives a proportional depth budget.  The async waiting/timeout is
-    handled by the caller; this class keeps the budget math and queue metadata
-    deterministic and testable.
+    Earlier versions allocated a floored sub-budget independently inside each
+    queue.  That introduced avoidable under-allocation before the actual
+    variance-based allocator ran.  Queue assignment is now metadata only; all
+    ready nodes share one budget-conserving apportionment call.
     """
 
     def __init__(
         self,
         *,
         queue_count: int = 2,
-        lambda_: float = 0.02,
-        n_min: int = 0,
+        lambda_: float = 0.0,
+        n_min: int = 1,
+        allocation_weight_mode: str = "std",
     ):
-        self.queues = [BudgetQueue(queue_id=i) for i in range(max(int(queue_count), 1))]
+        self.queues = [
+            BudgetQueue(queue_id=i) for i in range(max(int(queue_count), 1))
+        ]
         self.lambda_ = float(lambda_)
         self.n_min = max(int(n_min), 0)
+        self.allocation_weight_mode = allocation_weight_mode
 
     def allocate(
         self,
@@ -48,23 +48,20 @@ class FlexibleBudgetScheduler:
             queue.active = False
         if not nodes:
             return []
-        for node in nodes:
-            queue = min(self.queues, key=lambda q: (q.active, len(q.nodes), q.queue_id))
+
+        # Queue ids remain useful for logs and future async execution, but do
+        # not affect the mathematical budget split.
+        for idx, node in enumerate(nodes):
+            queue = self.queues[idx % len(self.queues)]
             queue.nodes.append(node)
             if isinstance(node, dict):
                 node["ingpo_budget_queue_id"] = queue.queue_id
 
-        summaries: List[AllocationSummary] = []
-        total_nodes = len(nodes)
-        for queue in self.queues:
-            if not queue.nodes:
-                continue
-            queue_budget = int(math.floor(total_depth_budget * len(queue.nodes) / max(total_nodes, 1)))
-            summary = allocate_branch_factors(
-                queue.nodes,
-                total_budget=queue_budget,
-                lambda_=self.lambda_,
-                n_min=self.n_min,
-            )
-            summaries.append(summary)
-        return summaries
+        summary = allocate_branch_factors(
+            nodes,
+            total_budget=total_depth_budget,
+            lambda_=self.lambda_,
+            n_min=self.n_min,
+            allocation_weight_mode=self.allocation_weight_mode,
+        )
+        return [summary]
